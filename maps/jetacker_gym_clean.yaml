@@ -1,0 +1,10 @@
+free_thresh: 0.25
+image: jetacker_gym_clean.pgm
+mode: trinary
+negate: 0
+occupied_thresh: 0.65
+origin:
+- -1.659758218027079
+- -1.9823975143881947
+- 0.0
+resolution: 0.019999999552965164

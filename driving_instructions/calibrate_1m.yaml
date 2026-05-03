@@ -1,0 +1,36 @@
+# 1m straight-line calibration test
+# Shorter version to avoid wall collision during debugging
+#
+# Tests motor_cmd_per_rad_s accuracy without hitting obstacles
+#
+# PROCEDURE:
+# 1. Mark robot's starting position on the ground (tape or chalk)
+# 2. Run this test
+# 3. Measure actual physical distance traveled
+# 4. Compare to commanded distance (1.0m)
+# 5. Calculate correction factor: correction = actual_distance / 1.0
+# 6. Adjust motor_cmd_per_rad_s: new_value = current_value / correction
+#
+# Example:
+#   Current motor_cmd_per_rad_s: 0.174
+#   Robot travels 1.1m instead of 1.0m
+#   Correction: 1.1 / 1.0 = 1.10 (robot goes 10% too far)
+#   New value: 0.174 / 1.10 = 0.158
+#
+# If robot under-shoots (travels 0.9m):
+#   Correction: 0.9 / 1.0 = 0.9 (robot goes 10% too short)
+#   New value: 0.174 / 0.9 = 0.193
+
+instructions:
+  - type: pause
+    seconds: 0.3
+    description: "Initial pause - capture resting state"
+
+  - type: distance
+    meters: 1.0
+    speed: 0.3
+    description: "Drive 1.0m forward at moderate speed"
+
+  - type: pause
+    seconds: 0.3
+    description: "Final pause - capture resting state"

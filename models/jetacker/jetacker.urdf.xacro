@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="jetacker" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- =========================================== -->
+  <!-- Include Macro Libraries                    -->
+  <!-- =========================================== -->
+  <xacro:include filename="urdf/materials.xacro" />
+  <xacro:include filename="urdf/inertial_matrix.xacro" />
+
+  <!-- =========================================== -->
+  <!-- Properties: Dimensions and Masses          -->
+  <!-- =========================================== -->
+
+  <!-- Base link (chassis bottom) -->
+  <xacro:property name="base_link_mass" value="1.6" />
+  <xacro:property name="base_link_w" value="0.296" />
+  <xacro:property name="base_link_h" value="0.16" />
+  <xacro:property name="base_link_d" value="0.126" />
+
+  <!-- Back shell (top housing) -->
+  <xacro:property name="body_link_mass" value="1.6" />
+  <xacro:property name="body_link_w" value="0.22" />
+  <xacro:property name="body_link_h" value="0.17" />
+  <xacro:property name="body_link_d" value="0.095" />
+
+  <!-- Wheels -->
+  <xacro:property name="wheel_mass" value="0.1" />
+  <xacro:property name="wheel_radius" value="0.05" />
+  <xacro:property name="wheel_length" value="0.039" />
+
+  <!-- Steering -->
+  <xacro:property name="steering_limit" value="0.4887" />  <!-- ~28 degrees -->
+  <xacro:property name="steering_mass" value="0.01" />
+  <xacro:property name="steering_inertia" value="0.0001" />
+  <xacro:property name="virtual_steering_mass" value="0.001" />
+  <xacro:property name="virtual_steering_inertia" value="0.00001" />
+
+  <!-- Wheel Positions (consolidated and rounded) -->
+  <xacro:property name="wheelbase" value="0.213" />  <!-- Distance between front and rear axles: 0.107 - (-0.106) -->
+  <xacro:property name="front_wheel_x" value="0.107" />
+  <xacro:property name="rear_wheel_x" value="-0.106" />
+  <xacro:property name="wheel_track_left" value="0.091" />   <!-- Left wheels Y position (front: 0.093, rear: 0.090, avg: 0.091) -->
+  <xacro:property name="wheel_track_right" value="-0.091" />  <!-- Right wheels Y position (symmetric) -->
+  <xacro:property name="front_wheel_z" value="0.05" />
+  <xacro:property name="rear_wheel_z" value="0.0503" />  <!-- Slightly higher, may indicate rake angle -->
+  <xacro:property name="wheel_y_offset_collision" value="0.019" />  <!-- Offset for collision cylinder -->
+
+  <!-- Base and Chassis -->
+  <xacro:property name="footprint_offset_z" value="-0.0003" />  <!-- Base footprint Z offset (0.3mm below ground) -->
+  <xacro:property name="base_collision_z" value="0.085" />  <!-- Base collision box center height -->
+  <xacro:property name="base_collision_x" value="-0.004" />  <!-- Base collision box center X offset -->
+
+  <!-- Sensor Mounting (consolidated positions) -->
+  <xacro:property name="sensor_y_offset" value="0.0007" />  <!-- Shared Y offset for turret and lidar (CAD origin) -->
+  <xacro:property name="turret_x" value="0.0313" />
+  <xacro:property name="turret_z" value="0.1616" />
+  <xacro:property name="turret_limit" value="2.09" />  <!-- ±119.8 degrees rotation limit -->
+  <xacro:property name="lidar_x" value="0.104" />
+  <xacro:property name="lidar_z" value="0.134" />
+  <xacro:property name="imu_height" value="0.1116" />  <!-- IMU mounting height above base_link -->
+
+  <!-- =========================================== -->
+  <!-- Macros: Reusable Components                -->
+  <!-- =========================================== -->
+
+  <!-- Macro for wheel link -->
+  <xacro:macro name="wheel_link" params="name mesh_file y_offset">
+    <link name="${name}">
+      <xacro:cylinder_inertial m="${wheel_mass}" r="${wheel_radius}" h="${wheel_length}" />
+      <visual>
+        <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+        <geometry>
+          <mesh filename="package://jetacker_description/meshes/${mesh_file}" />
+        </geometry>
+        <material name="black" />
+      </visual>
+      <collision>
+        <origin xyz="0 ${y_offset} 0" rpy="${M_PI/2} 0 0" />
+        <geometry>
+          <cylinder length="${wheel_length}" radius="${wheel_radius}" />
+        </geometry>
+      </collision>
+    </link>
+  </xacro:macro>
+
+  <!-- Macro for steering knuckle (invisible link that provides steering axis) -->
+  <xacro:macro name="steering_knuckle" params="name">
+    <link name="${name}">
+      <inertial>
+        <mass value="${steering_mass}" />
+        <inertia ixx="${steering_inertia}" ixy="0.0" ixz="0.0"
+                 iyy="${steering_inertia}" iyz="0.0" izz="${steering_inertia}" />
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <!-- Macro for steered wheel assembly (knuckle + steering joint + wheel + wheel joint) -->
+  <xacro:macro name="steered_wheel" params="side xyz mesh_file y_offset wheel_axis">
+    <!-- Steering knuckle -->
+    <xacro:steering_knuckle name="front_${side}_wheel_steering" />
+
+    <!-- Steering joint (mimic the center steering joint) -->
+    <joint name="front_${side}_wheel_steering_joint" type="revolute">
+      <parent link="base_link" />
+      <child link="front_${side}_wheel_steering" />
+      <origin xyz="${xyz}" rpy="0 0 0" />
+      <axis xyz="0 0 1" />
+      <limit lower="${-steering_limit}" upper="${steering_limit}" effort="10" velocity="1" />
+      <mimic joint="front_steering_joint" multiplier="1.0" offset="0.0" />
+    </joint>
+
+    <!-- Wheel link -->
+    <xacro:wheel_link name="front_${side}_wheel" mesh_file="${mesh_file}" y_offset="${y_offset}" />
+
+    <!-- Wheel joint (continuous rotation) -->
+    <joint name="front_${side}_wheel_joint" type="continuous">
+      <parent link="front_${side}_wheel_steering" />
+      <child link="front_${side}_wheel" />
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <axis xyz="${wheel_axis}" />
+    </joint>
+  </xacro:macro>
+
+  <!-- Macro for rear (non-steered) wheel -->
+  <xacro:macro name="rear_wheel" params="side xyz mesh_file y_offset wheel_axis">
+    <xacro:wheel_link name="rear_${side}_wheel" mesh_file="${mesh_file}" y_offset="${y_offset}" />
+
+    <joint name="rear_${side}_wheel_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="rear_${side}_wheel" />
+      <origin xyz="${xyz}" rpy="0 0 0" />
+      <axis xyz="${wheel_axis}" />
+    </joint>
+  </xacro:macro>
+
+  <!-- =========================================== -->
+  <!-- Robot Structure: Base and Body             -->
+  <!-- =========================================== -->
+
+  <!-- Base footprint (ground projection) -->
+  <link name="base_footprint" />
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint" />
+    <child link="base_link" />
+    <origin xyz="0 0 ${footprint_offset_z}" rpy="0 0 0" />
+  </joint>
+
+  <!-- Base link (chassis) -->
+  <link name="base_link">
+    <xacro:box_inertial m="${base_link_mass}" w="${base_link_w}" h="${base_link_h}" d="${base_link_d}" />
+    <visual>
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+      <geometry>
+        <mesh filename="package://jetacker_description/meshes/base_link.STL" />
+      </geometry>
+      <material name="black" />
+    </visual>
+    <collision>
+      <origin xyz="${base_collision_x} 0 ${base_collision_z}" rpy="0 0 0" />
+      <geometry>
+        <box size="${base_link_w} ${base_link_h} ${base_link_d}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Back shell (top housing) -->
+  <link name="back_shell_link">
+    <xacro:box_inertial m="${body_link_mass}" w="${body_link_w}" h="${body_link_h}" d="${body_link_d}" />
+    <visual>
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+      <geometry>
+        <mesh filename="package://jetacker_description/meshes/back_shell_link.STL" />
+      </geometry>
+      <material name="green" />
+    </visual>
+    <collision>
+      <origin xyz="-0.04 0 0.1955" rpy="0 0 0" />
+      <geometry>
+        <box size="${body_link_w} ${body_link_h} ${body_link_d}" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="back_shell_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="back_shell_link" />
+  </joint>
+
+  <!-- =========================================== -->
+  <!-- Turret and Camera                          -->
+  <!-- =========================================== -->
+
+  <!-- Turret link (pan mechanism) -->
+  <link name="turret_link">
+    <inertial>
+      <origin xyz="0.000273458158848059 4.49697391709507E-08 0.0127682239974202" rpy="0 0 0" />
+      <mass value="0.0117617552923888" />
+      <inertia ixx="2.42304907313034E-06" ixy="8.36427578709212E-13" ixz="-4.88815706874446E-08"
+               iyy="2.24167366920736E-06" iyz="2.4783598093895E-12" izz="3.78066563706159E-06" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+      <geometry>
+        <mesh filename="package://jetacker_description/meshes/turret_link.STL" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+
+  <joint name="turret_joint" type="revolute">
+    <origin xyz="${turret_x} ${sensor_y_offset} ${turret_z}" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="turret_link" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-turret_limit}" upper="${turret_limit}" effort="1000" velocity="10" />
+  </joint>
+
+  <!-- Depth camera -->
+  <link name="depth_cam_link">
+    <inertial>
+      <origin xyz="-0.00267477609208174 -1.63263137193841E-05 -0.00522210299748882" rpy="0 0 0" />
+      <mass value="0.22552781639362" />
+      <inertia ixx="0.000408522155796754" ixy="-7.65921501012663E-09" ixz="1.66771046033071E-07"
+               iyy="4.81468336120099E-05" iyz="-5.69880969191004E-09" izz="0.000428962116485588" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+      <geometry>
+        <mesh filename="package://jetacker_description/meshes/depth_cam_link.STL" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+
+  <joint name="depth_cam_joint" type="fixed">
+    <origin xyz="0.0057651 0.00025 0.057913" rpy="0 0 0" />
+    <parent link="turret_link" />
+    <child link="depth_cam_link" />
+  </joint>
+
+  <!-- =========================================== -->
+  <!-- Sensors: LiDAR and IMU                     -->
+  <!-- =========================================== -->
+
+  <!-- LiDAR -->
+  <link name="lidar_link">
+    <inertial>
+      <origin xyz="-0.00221931680115031 0.000376419599582719 -0.0173018800523995" rpy="0 0 0" />
+      <mass value="0.0438457545362112" />
+      <inertia ixx="1.59958556469832E-05" ixy="4.53029353441676E-08" ixz="2.33892337631863E-07"
+               iyy="2.04183700013467E-05" iyz="-1.10000396493279E-08" izz="3.50483610398295E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="${-M_PI/2} 0 0" />
+      <geometry>
+        <mesh filename="package://jetacker_description/meshes/lidar_link.STL" />
+      </geometry>
+      <material name="black" />
+    </visual>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <origin xyz="${lidar_x} ${sensor_y_offset} ${lidar_z}" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="lidar_link" />
+  </joint>
+
+  <!-- LiDAR frame (sensor frame for ROS) -->
+  <link name="lidar_frame" />
+
+  <joint name="lidar_frame_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 ${M_PI}" />
+    <parent link="lidar_link" />
+    <child link="lidar_frame" />
+  </joint>
+
+  <!-- LiDAR sim frame (Gazebo convention: +X forward, rotated 180° from ROS convention) -->
+  <link name="lidar_sim_frame" />
+
+  <joint name="lidar_sim_frame_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="0 0 ${M_PI}" />
+    <parent link="lidar_link" />
+    <child link="lidar_sim_frame" />
+  </joint>
+
+  <!-- Rear TOF sensors (TF frames only, sensors defined in model.sdf) -->
+  <xacro:property name="tof_x" value="-0.15" />
+  <xacro:property name="tof_y" value="0.08" />
+  <xacro:property name="tof_z" value="0.08" />
+  <xacro:property name="tof_yaw_offset" value="${M_PI/12}" />  <!-- 15° splay from straight back -->
+
+  <xacro:macro name="tof_sensor" params="name yaw y">
+    <link name="${name}_link">
+      <visual>
+        <geometry>
+          <sphere radius="0.01" />
+        </geometry>
+        <material name="red" />
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="${tof_x} ${y} ${tof_z}" rpy="0 0 ${yaw}" />
+      <parent link="base_link" />
+      <child link="${name}_link" />
+    </joint>
+  </xacro:macro>
+
+  <xacro:tof_sensor name="tof_rear_left"  yaw="${M_PI - tof_yaw_offset}" y="${tof_y}" />
+  <xacro:tof_sensor name="tof_rear_right" yaw="${M_PI + tof_yaw_offset}" y="${-tof_y}" />
+
+  <!-- IMU -->
+  <link name="imu_link" />
+
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0 0 ${imu_height}" rpy="0 0 ${-M_PI/2}" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+  </joint>
+
+  <!-- =========================================== -->
+  <!-- Wheels: Tricycle Configuration             -->
+  <!-- =========================================== -->
+
+  <!-- Front virtual steering link (center steering axis for tricycle controller) -->
+  <link name="front_steering_link">
+    <inertial>
+      <mass value="${virtual_steering_mass}" />
+      <inertia ixx="${virtual_steering_inertia}" ixy="0.0" ixz="0.0"
+               iyy="${virtual_steering_inertia}" iyz="0.0" izz="${virtual_steering_inertia}" />
+    </inertial>
+  </link>
+
+  <joint name="front_steering_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="front_steering_link" />
+    <origin xyz="${front_wheel_x} 0 ${front_wheel_z}" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-steering_limit}" upper="${steering_limit}" effort="10" velocity="1" />
+  </joint>
+
+  <!-- Front wheels with steering (using macros) -->
+  <xacro:steered_wheel side="left"  xyz="${front_wheel_x} ${wheel_track_left} ${front_wheel_z}"
+                       mesh_file="wheel_left_front.STL"  y_offset="${wheel_y_offset_collision}"  wheel_axis="0 1 0" />
+  <xacro:steered_wheel side="right" xyz="${front_wheel_x} ${wheel_track_right} ${front_wheel_z}"
+                       mesh_file="wheel_right_front.STL" y_offset="${-wheel_y_offset_collision}" wheel_axis="0 1 0" />
+
+  <!-- Rear wheels (using macros) -->
+  <xacro:rear_wheel side="left"  xyz="${rear_wheel_x} ${wheel_track_left} ${rear_wheel_z}"
+                    mesh_file="wheel_left_back.STL"  y_offset="${wheel_y_offset_collision}"  wheel_axis="0 1 0" />
+  <xacro:rear_wheel side="right" xyz="${rear_wheel_x} ${wheel_track_right} ${rear_wheel_z}"
+                    mesh_file="wheel_right_back.STL" y_offset="${-wheel_y_offset_collision}" wheel_axis="0 -1 0" />
+
+  <!-- =========================================== -->
+  <!-- ros2_control: Hardware Interface           -->
+  <!-- =========================================== -->
+
+  <ros2_control name="JetackerAckermannSystem" type="system">
+    <hardware>
+      <plugin>joint_state_topic_hardware_interface/JointStateTopicSystem</plugin>
+      <param name="sum_wrapped_joint_states">false</param>
+      <param name="trigger_joint_command_threshold">-1.0</param>
+    </hardware>
+
+    <!-- Single front steering joint (tricycle configuration) -->
+    <joint name="front_steering_joint">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+
+    <!-- Rear left wheel -->
+    <joint name="rear_left_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+
+    <!-- Rear right wheel -->
+    <joint name="rear_right_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+
+    <!-- Turret joint (not used by tricycle controller) -->
+    <joint name="turret_joint">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+  </ros2_control>
+
+</robot>

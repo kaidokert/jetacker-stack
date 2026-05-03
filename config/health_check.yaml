@@ -1,0 +1,39 @@
+# Health Check Configuration for Test Drive Node - Robot Agnostic
+# Defines required topics, transforms, and minimum sample rates
+# All checks must pass before test execution begins
+# Works with: Jetacker (tricycle), slam_bot (diff_drive), or any robot with EKF
+
+health_checks:
+  # Timeout for health check completion (seconds)
+  timeout: 10.0
+
+  # Sample duration for rate checks (seconds)
+  sample_duration: 1.0
+
+  # Required topics with minimum rates
+  topics:
+    # EKF-fused odometry (works with any robot)
+    - topic: /odometry/filtered
+      message_type: nav_msgs/msg/Odometry
+      min_rate_hz: 10.0
+      required_fields:
+        - pose.pose.position.x
+        - pose.pose.position.y
+        - twist.twist.linear.x
+      description: "EKF-fused odometry (robot-agnostic)"
+
+    # Joint states - wheel position and velocity (common to all robots)
+    - topic: /joint_states
+      message_type: sensor_msgs/msg/JointState
+      min_rate_hz: 10.0
+      required_fields:
+        - position
+        - velocity
+      description: "Joint states from gz_ros2_control"
+
+  # Required TF transforms
+  transforms:
+    - parent_frame: odom
+      child_frame: base_link
+      max_age_sec: 0.5
+      description: "Odometry to base_link (published by robot controller)"

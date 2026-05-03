@@ -1,0 +1,53 @@
+# 3-Point Turn: 180° Counter-Clockwise (Left)
+# Three forward-reverse-forward arcs to rotate 180° near starting position.
+# Ackermann constraint: negative forward_velocity = reverse motion,
+# angular.z sign preserved → heading continues CCW through all legs.
+
+kP: 1.5
+min_velocity: 0.05
+
+instructions:
+  - type: rotation
+    degrees: 60.0   # LEFT (CCW)
+    speed: 0.4
+    forward_velocity: 0.184   # forward arc
+    kP_angular: 2.0
+    min_angular_velocity: 0.1
+    kP_linear: 0.5
+    min_linear_velocity: 0.03
+    timeout: 10.0
+    description: "Leg 1: forward left 60°"
+
+  - type: pause
+    seconds: 1.0
+    description: "Settle before reverse"
+
+  - type: rotation
+    degrees: 60.0   # LEFT (CCW) — heading continues same direction
+    speed: 0.4
+    forward_velocity: -0.184  # REVERSE arc
+    kP_angular: 2.0
+    min_angular_velocity: 0.1
+    kP_linear: 0.5
+    min_linear_velocity: 0.03
+    timeout: 10.0
+    description: "Leg 2: reverse left 60°"
+
+  - type: pause
+    seconds: 1.0
+    description: "Settle before final forward"
+
+  - type: rotation
+    degrees: 60.0   # LEFT (CCW)
+    speed: 0.4
+    forward_velocity: 0.184   # forward arc
+    kP_angular: 2.0
+    min_angular_velocity: 0.1
+    kP_linear: 0.5
+    min_linear_velocity: 0.03
+    timeout: 10.0
+    description: "Leg 3: forward left 60°"
+
+  - type: pause
+    seconds: 2.0
+    description: "Settle before measurement"

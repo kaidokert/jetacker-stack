@@ -1,0 +1,496 @@
+
+# ==============================================================================
+# Core shared services - runs on both Gazebo simulation and physical robot
+# ==============================================================================
+# Combined with an overlay via COMPOSE_FILE in .env:
+#   sim:   COMPOSE_FILE=docker-compose.core.yml:docker-compose.sim.yml
+#   robot: COMPOSE_FILE=docker-compose.core.yml:docker-compose.robot.yml
+#
+# Networking is NOT set here - each overlay adds network_mode/ipc via its own
+# anchor (x-sim-network or x-robot-network).
+#
+# debug and foxglove are also overlay-defined since their networking is
+# fundamentally different (bridge vs host).
+
+x-ros2-env: &ros2-env
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+  USE_SIM_TIME: ${USE_SIM_TIME}
+
+x-restart-policy: &restart-policy
+  restart: "no"
+  stop_grace_period: "1s"
+
+services:
+  # Base image builder
+  ros2-base:
+    build:
+      context: .
+      dockerfile: docker/base/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-base:latest
+    scale: 0
+
+  # Overlay workspace with patched robot_localization
+  # sim.yml adds: depends_on ros2-gazebo
+  ros2-overlay:
+    build:
+      context: .
+      dockerfile: docker/overlay/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    scale: 0
+
+  # Nav2 stack image
+  # sim.yml adds: depends_on ros2-gazebo
+  ros2-nav2:
+    build:
+      context: .
+      dockerfile: docker/nav2/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    scale: 0
+
+  # Health check node
+  # Networking added by overlay (<<: *sim-network or *robot-network)
+  health-check:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: health-check
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/health_check.py
+      --ros-args -p use_sim_time:=${USE_SIM_TIME}
+    profiles:
+      - calib
+      - slam
+      - jetacker
+      - jetacker-nav2
+
+  # Test drive orchestrator
+  # Networking added by overlay
+  test-drive:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: test-drive
+    environment:
+      <<: *ros2-env
+      NEUTER: ${TEST_DRIVE_NEUTER:-}
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./driving_instructions:/workspace/driving_instructions:ro
+      - ./ros:/workspace/ros:ro
+      - ./logs:/workspace/logs
+    command: >
+      python3 /workspace/ros/test_drive.py
+      --ros-args -p use_sim_time:=${USE_SIM_TIME}
+    profiles:
+      - calib
+      - slam
+      - jetacker
+      - jetacker-nav2
+
+  # ==============================================================================
+  # Jetacker robot services (shared between sim and physical robot)
+  # Networking added by overlay (<<: *sim-network or <<: *robot-network)
+  # Gazebo-specific depends_on entries added by docker-compose.sim.yml
+  # ==============================================================================
+
+  jetacker-robot-state-publisher:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-robot-state-publisher
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./models:/workspace/models:ro
+    command: >
+      /bin/bash -c '
+      URDF_CONTENT=$$(cat /workspace/models/jetacker/jetacker.urdf) &&
+      ros2 run robot_state_publisher robot_state_publisher --ros-args -p robot_description:="$$URDF_CONTENT" -p use_sim_time:=${USE_SIM_TIME} -p publish_frequency:=10.0 -r __node:=jetacker_robot_state_publisher
+      '
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-controller-manager:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-controller-manager
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./models:/workspace/models:ro
+    command: >
+      bash -c '
+      URDF_CONTENT=$$(cat /workspace/models/jetacker/jetacker.urdf) &&
+      ros2 run controller_manager ros2_control_node --ros-args -p robot_description:="$$URDF_CONTENT" --params-file /workspace/config/jetacker/tricycle_controller.yaml -p use_sim_time:=${USE_SIM_TIME}
+      -r /joint_states:=/joint_states_controlled
+      '
+    depends_on:
+      - jetacker-robot-state-publisher
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-controller-spawner:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-controller-spawner
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    command: >
+      bash -c "ros2 run controller_manager spawner joint_state_broadcaster tricycle_steering_controller --controller-manager /controller_manager"
+    depends_on:
+      - jetacker-controller-manager
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-passive-joint-publisher:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-passive-joint-publisher
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/passive_joint_publisher.py
+      --ros-args -p use_sim_time:=${USE_SIM_TIME}
+    depends_on:
+      - jetacker-robot-state-publisher
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-joint-state-merger:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-joint-state-merger
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/joint_state_merger.py
+      --ros-args -p use_sim_time:=${USE_SIM_TIME}
+    depends_on:
+      - jetacker-controller-spawner
+      - jetacker-passive-joint-publisher
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-cmd-vel-relay:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-cmd-vel-relay
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/cmd_vel_relay.py
+      --ros-args -r /cmd_vel_stamped:=/tricycle_steering_controller/reference
+    depends_on:
+      - jetacker-controller-spawner
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-ekf-localization:
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    container_name: jetacker-ekf-localization
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: ros2 run robot_localization ekf_node --ros-args -p use_sim_time:=${USE_SIM_TIME} --params-file /workspace/config/jetacker/ekf.yaml
+    depends_on:
+      jetacker-controller-spawner:
+        condition: service_started
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  jetacker-slam-toolbox:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-slam-toolbox
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./maps:/workspace/maps:rw
+      - ./logs:/workspace/logs
+    command: >
+      ros2 launch slam_toolbox online_async_launch.py
+        slam_params_file:=/workspace/config/jetacker/slam_toolbox.yaml
+        use_sim_time:=${USE_SIM_TIME}
+    depends_on:
+      jetacker-ekf-localization:
+        condition: service_started
+    profiles:
+      - jetacker
+
+  # ==============================================================================
+  # Jetacker Nav2 Stack
+  # ==============================================================================
+
+  jetacker-map-server:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-map-server
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./maps:/workspace/maps:ro
+    command: >
+      ros2 run nav2_map_server map_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p yaml_filename:=${JETACKER_MAP}
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-amcl:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-amcl
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_amcl amcl
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    depends_on:
+      - jetacker-map-server
+    profiles:
+      - jetacker-nav2
+
+  jetacker-static-map-odom:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-static-map-odom
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    command: >
+      ros2 run tf2_ros static_transform_publisher
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --
+      0 0 0 0 0 0 map odom
+    depends_on:
+      - jetacker-map-server
+    profiles:
+      - jetacker-nav2-odom
+
+  jetacker-controller-server:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-controller-server
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_controller controller_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-planner-server:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-planner-server
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_planner planner_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    depends_on:
+      - jetacker-map-server
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-behavior-server:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-behavior-server
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_behaviors behavior_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-bt-navigator:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-bt-navigator
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_bt_navigator bt_navigator
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    depends_on:
+      - jetacker-controller-server
+      - jetacker-planner-server
+      - jetacker-behavior-server
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  # Publish BT XML topology for dashboard tree rendering
+  jetacker-bt-topology-publisher:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-bt-topology-publisher
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/bt_topology_publisher.py
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p bt_xml_path:=/opt/ros/${ROS_DISTRO}/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_time.xml
+    depends_on:
+      - jetacker-bt-navigator
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-waypoint-follower:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-waypoint-follower
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_waypoint_follower waypoint_follower
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    depends_on:
+      - jetacker-bt-navigator
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-velocity-smoother:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-velocity-smoother
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_velocity_smoother velocity_smoother
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/jetacker/nav2_params.yaml
+    profiles:
+      - jetacker-nav2
+      - jetacker-nav2-odom
+
+  jetacker-nav2-lifecycle-manager:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-nav2-lifecycle-manager
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_lifecycle_manager lifecycle_manager
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p autostart:=true
+      -p node_names:=['map_server','amcl','controller_server','planner_server','behavior_server','bt_navigator']
+    depends_on:
+      - jetacker-map-server
+      - jetacker-amcl
+      - jetacker-controller-server
+      - jetacker-planner-server
+      - jetacker-behavior-server
+      - jetacker-bt-navigator
+    profiles:
+      - jetacker-nav2
+
+  jetacker-nav2-odom-lifecycle-manager:
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: jetacker-nav2-odom-lifecycle-manager
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_lifecycle_manager lifecycle_manager
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p autostart:=true
+      -p node_names:=['map_server','controller_server','planner_server','behavior_server','bt_navigator']
+    depends_on:
+      - jetacker-map-server
+      - jetacker-static-map-odom
+      - jetacker-controller-server
+      - jetacker-planner-server
+      - jetacker-behavior-server
+      - jetacker-bt-navigator
+    profiles:
+      - jetacker-nav2-odom
+
+  jetacker-tf-gate-checker:
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    container_name: jetacker-tf-gate-checker
+    environment:
+      <<: *ros2-env
+    <<: *restart-policy
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >-
+      bash -c "source /overlay_ws/install/setup.bash &&
+      python3 /workspace/ros/tf_gate_checker.py
+      --ros-args -p use_sim_time:=${USE_SIM_TIME}"
+    depends_on:
+      - jetacker-controller-spawner
+    profiles:
+      - jetacker-nav2

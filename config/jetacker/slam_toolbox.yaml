@@ -1,0 +1,46 @@
+# SLAM Toolbox Configuration - Simulation
+# Adapted from real robot config for sim environment
+
+slam_toolbox:
+  ros__parameters:
+
+    # ROS Parameters
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link  # Jetacker uses base_link (not base_footprint)
+    scan_topic: /scan  # Standard ROS topic (remapped from Gazebo in bridge)
+    mode: mapping
+
+    # Map saver
+    use_map_saver: true
+
+    # Logging
+    debug_logging: false
+
+    # Processing
+    throttle_scans: 1  # Process every scan
+    map_update_interval: 0.2
+    resolution: 0.02
+    max_laser_range: 12.0
+
+    # TF parameters
+    transform_timeout: 1.0
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # General Parameters (using conservative tuning from real robot)
+    minimum_travel_distance: 0.5
+    minimum_travel_heading: 0.5
+    scan_buffer_maximum_scan_distance: 5.0
+    link_match_minimum_response_fine: 0.30
+    link_scan_maximum_distance: 2.5
+    loop_search_maximum_distance: 2.5
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 15
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.50
+    loop_match_minimum_response_fine: 0.45
+
+    # Scan Matcher Parameters
+    distance_variance_penalty: 0.05
+    angle_variance_penalty: 0.05

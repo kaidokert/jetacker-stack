@@ -1,0 +1,514 @@
+# Optuna MPPI Tuning Parameter Inventory
+#
+# Single source of truth for all tunable parameters, read by tune_mppi.py.
+# Replaces hardcoded PARAM_SPACE dict.
+#
+# Fields:
+#   ros_path:   "node:param" for ros2 param set
+#   baseline:   current value in nav2_params.yaml
+#   range:      [low, high] search bounds
+#   type:       float | int
+#   scale:      linear | log (log for noise/temperature where effect is multiplicative)
+#   tier:       1 = active tuning, 2 = behavioral, 3 = cross-node, 4 = locked (low importance)
+#   locked:     if present, param is fixed at this value during Phase 1 (not sampled)
+#   couples_with: params that interact strongly (for analysis, not enforced)
+#   notes:      rationale
+#
+# ---
+
+# ===========================================================================
+# Tier 1 — Smoothness knobs (Phase 1: 6 params)
+# ===========================================================================
+
+PathAlignCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.cost_weight"
+  baseline: 58.15
+  range: [20.0, 100.0]
+  type: float
+  scale: linear
+  tier: 1
+  couples_with: [PathAngleCritic.cost_weight]
+  notes: >
+    Dominant lateral tracking weight. Baseline 18.7 (M3v6+M6v1 composite).
+    Range [15,90]->[20,100] per M5v5 study (p10=20, p50=44, p90=81, n=167 rev<=10).
+
+PathAngleCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PathAngleCritic.cost_weight"
+  baseline: 15.0
+  range: [3.0, 25.0]
+  type: float
+  scale: linear
+  tier: 2
+  couples_with: [PathAlignCritic.cost_weight]
+  notes: >
+    Heading along path. Re-promoted to tier 2. Passing M3 trials used 12-25.
+    Real robot needed 3.0 (different physics) — range includes low end.
+    Range widened from old [7,42] to [3,25] based on cross-platform data.
+    Caveat: showed 0.217 importance in mppi_m1m2m4 study.
+
+temperature:
+  ros_path: "controller_server:FollowPath.temperature"
+  baseline: 0.215
+  range: [0.05, 0.60]
+  type: float
+  scale: log
+  tier: 1
+  couples_with: [wz_std, vx_std]
+  notes: >
+    Softmax selectiveness. Baseline 0.243 (M3v6+M6v1 composite).
+    Range [0.07,0.65]->[0.05,0.60] per M5v5 study (p10=0.087, p50=0.20, p90=0.54).
+    Kept loose for M7/M8.
+
+wz_std:
+  ros_path: "controller_server:FollowPath.wz_std"
+  baseline: 0.091
+  range: [0.08, 0.50]
+  type: float
+  scale: log
+  tier: 1
+  couples_with: [temperature, vx_std]
+  notes: >
+    Angular velocity noise std dev. Baseline 0.175 (M3v6+M6v1 composite).
+    Range [0.10,0.50]->[0.08,0.50] per M5v5 study (p10=0.11, p50=0.26, p90=0.44).
+    Low end loosened for M7/M8.
+
+vx_std:
+  ros_path: "controller_server:FollowPath.vx_std"
+  baseline: 0.107
+  range: [0.05, 0.30]
+  type: float
+  scale: log
+  tier: 1
+  couples_with: [temperature, wz_std]
+  notes: >
+    Forward velocity noise std dev. Baseline 0.096 (M3v6+M6v1 composite).
+    Range [0.06,0.30]->[0.05,0.30] per M5v5 study (p10=0.08, p50=0.16, p90=0.26).
+    Low end loosened for M7/M8.
+
+gamma:
+  ros_path: "controller_server:FollowPath.gamma"
+  baseline: 0.00235
+  range: [0.001, 0.03]
+  type: float
+  scale: log
+  tier: 4
+  locked: 0.00235
+  notes: >
+    Smoothness vs low-energy tradeoff in MPPI objective. Demoted to tier 4:
+    avg fANOVA importance 0.057 for turn quality (time/jitter/rev) across
+    M3+M6 studies. Near-zero for jitter (0.012-0.016) and reversals (0.017-0.023).
+    Locked at 0.00235 (cluster center of M3 v6 smart selection winners).
+    Caveat: showed 0.288 importance in mppi_m1m2m4 study — re-promote if
+    tuning straight/right drives.
+
+# ===========================================================================
+# Tier 2 — Behavioral + performance (Phase 2: adds 10 more params)
+# ===========================================================================
+
+GoalCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.GoalCritic.cost_weight"
+  baseline: 7.59
+  range: [1.0, 20.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: Goal attraction strength. Too low = slow approach, too high = overshoot.
+
+GoalAngleCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.GoalAngleCritic.cost_weight"
+  baseline: 3.28
+  range: [1.0, 20.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: Final heading alignment at goal. Affects last-meter behavior.
+
+PathFollowCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PathFollowCritic.cost_weight"
+  baseline: 13.44
+  range: [1.0, 50.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: Progress along path. Too low = dawdling, too high = cuts corners.
+
+PreferForwardCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PreferForwardCritic.cost_weight"
+  baseline: 7.31
+  range: [1.0, 20.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: >
+    Penalizes reverse driving. Directly affects M2/M6 reverse tests.
+    Too high = refuses to reverse when planner says to.
+
+ConstraintCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.ConstraintCritic.cost_weight"
+  baseline: 4.0
+  range: [1.0, 15.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: >
+    Kinematic constraint violation penalty. Re-promoted to tier 2 for
+    Ackermann turning studies (M3/M8). Previous demotion was based on
+    studies that didn't isolate turning behavior.
+
+VelocityDeadbandCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.VelocityDeadbandCritic.cost_weight"
+  baseline: 5.0
+  range: [1.0, 35.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: >
+    Penalizes near-zero velocities. Ackermann needs forward velocity to steer —
+    higher values force MPPI to maintain speed through turns. But too high
+    prevents slow approach needed for tight turns. Key Ackermann-specific param.
+
+CostCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.CostCritic.cost_weight"
+  baseline: 6.98
+  range: [1.0, 15.0]
+  type: float
+  scale: linear
+  tier: 2
+  notes: Costmap obstacle avoidance. Already works — low priority.
+
+batch_size:
+  ros_path: "controller_server:FollowPath.batch_size"
+  baseline: 2000
+  range: [500, 4000]
+  type: int
+  scale: linear
+  tier: 2
+  locked: 2000  # Fixed in Phase 1 — compute knob, not behavioral
+  notes: >
+    Number of sampled trajectories. More = better coverage but slower.
+    Locked at 2000 for Phase 1 to avoid confounding run-to-run stability.
+    Changes trigger Optimizer::reset() (array reallocation).
+
+iteration_count:
+  ros_path: "controller_server:FollowPath.iteration_count"
+  baseline: 1
+  range: [1, 3]
+  type: int
+  scale: linear
+  tier: 2
+  locked: 1  # Fixed in Phase 1
+  notes: >
+    MPPI iterations per control cycle. 2-3 can smooth the solution
+    before publishing, but 2x/3x compute cost per cycle. Risk of
+    controller overrun at 20 Hz.
+
+AckermannConstraints.min_turning_r:
+  ros_path: "controller_server:FollowPath.AckermannConstraints.min_turning_r"
+  baseline: 0.35
+  range: [0.2, 0.6]
+  type: float
+  scale: linear
+  tier: 2
+  locked: 0.35
+  notes: >
+    Minimum turning radius constraint on MPPI output (not sampled
+    trajectories). Clips wz when vx/wz < min_turning_r. Physical
+    minimum ~0.46m but simulation can handle tighter.
+    DO NOT increase above 0.35 — setting this to 0.8 caused M8 yaw error
+    floor at 29° (robot couldn't make tight corrections after S-curve).
+    This is NOT the planner turning radius (that's planner.minimum_turning_radius).
+
+PathAlignCritic.offset_from_furthest:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.offset_from_furthest"
+  baseline: 20
+  range: [5, 40]
+  type: int
+  scale: linear
+  tier: 2
+  notes: >
+    Path points ahead to align with. Too small = robot whips its tail
+    aggressively to align. Too large = lazy alignment. Hidden high-impact
+    param flagged by expert review.
+
+# ===========================================================================
+# Tier 3 — Low impact / cross-node (Phase 3 if needed)
+# ===========================================================================
+
+# --- MPPI critic thresholds ---
+
+PathAlignCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.threshold_to_consider"
+  baseline: 0.3
+  range: [0.2, 1.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Distance to goal below which PathAlign stops scoring.
+
+PathAlignCritic.trajectory_point_step:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.trajectory_point_step"
+  baseline: 4
+  range: [1, 8]
+  type: int
+  scale: linear
+  tier: 3
+  notes: Downsampling of trajectory points for alignment scoring.
+
+PathAlignCritic.max_path_occupancy_ratio:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.max_path_occupancy_ratio"
+  baseline: 0.05
+  range: [0.01, 0.15]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Critic disables itself if path occupancy exceeds this.
+
+PathAngleCritic.offset_from_furthest:
+  ros_path: "controller_server:FollowPath.PathAngleCritic.offset_from_furthest"
+  baseline: 4
+  range: [2, 15]
+  type: int
+  scale: linear
+  tier: 3
+  notes: Path points after furthest for angle calculation.
+
+PathFollowCritic.offset_from_furthest:
+  ros_path: "controller_server:FollowPath.PathFollowCritic.offset_from_furthest"
+  baseline: 5
+  range: [2, 15]
+  type: int
+  scale: linear
+  tier: 3
+  notes: Path points after furthest for tracking target.
+
+GoalAngleCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.GoalAngleCritic.threshold_to_consider"
+  baseline: 0.3
+  range: [0.1, 1.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Distance below which goal angle critic activates.
+
+GoalCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.GoalCritic.threshold_to_consider"
+  baseline: 0.3
+  range: [0.2, 2.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Distance below which goal attraction activates.
+
+CostCritic.critical_cost:
+  ros_path: "controller_server:FollowPath.CostCritic.critical_cost"
+  baseline: 300.0
+  range: [200.0, 300.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Cost threshold for collision penalty (253=inscribed, 254=lethal).
+
+CostCritic.near_goal_distance:
+  ros_path: "controller_server:FollowPath.CostCritic.near_goal_distance"
+  baseline: 0.3
+  range: [0.1, 1.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Distance to goal where costmap checking relaxes.
+
+CostCritic.trajectory_point_step:
+  ros_path: "controller_server:FollowPath.CostCritic.trajectory_point_step"
+  baseline: 2
+  range: [1, 5]
+  type: int
+  scale: linear
+  tier: 3
+  notes: Downsampling of trajectory points for cost evaluation.
+
+PreferForwardCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.PreferForwardCritic.threshold_to_consider"
+  baseline: 0.2
+  range: [0.1, 1.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Distance below which forward preference activates.
+
+# --- MPPI path handler ---
+
+prune_distance:
+  ros_path: "controller_server:FollowPath.prune_distance"
+  baseline: 1.7
+  range: [0.5, 3.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Lookahead distance for path pruning.
+
+# --- MPPI velocity limits (optimizer level, live-tunable) ---
+
+vx_max:
+  ros_path: "controller_server:FollowPath.vx_max"
+  baseline: 0.5
+  range: [0.2, 0.8]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Max forward speed. Higher = faster but harder to control.
+
+vx_min:
+  ros_path: "controller_server:FollowPath.vx_min"
+  baseline: -0.3
+  range: [-0.5, -0.1]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Max reverse speed (negative). Affects M2/M6.
+
+# --- SmacPlannerHybrid (separate node) ---
+
+planner.minimum_turning_radius:
+  ros_path: "planner_server:GridBased.minimum_turning_radius"
+  baseline: 0.8
+  range: [0.4, 3.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    Planner turning radius. Directly affects the reference path MPPI
+    follows. Too tight = infeasible paths, too wide = inefficient routing.
+    Triggers A* reinit on change.
+
+planner.reverse_penalty:
+  ros_path: "planner_server:GridBased.reverse_penalty"
+  baseline: 2.0
+  range: [1.0, 50.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    Penalty for reverse segments in planned path. Affects whether
+    planner chooses forward or reverse routes.
+
+planner.change_penalty:
+  ros_path: "planner_server:GridBased.change_penalty"
+  baseline: 1.0
+  range: [0.5, 50.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Penalty for direction changes in planned path.
+
+planner.cost_penalty:
+  ros_path: "planner_server:GridBased.cost_penalty"
+  baseline: 100.0
+  range: [10.0, 200.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: How much planner avoids high-cost areas. Very high = wide berth.
+
+planner.non_straight_penalty:
+  ros_path: "planner_server:GridBased.non_straight_penalty"
+  baseline: 1.01
+  range: [1.0, 20.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: Penalty for non-straight segments. Higher = straighter paths.
+
+planner.retrospective_penalty:
+  ros_path: "planner_server:GridBased.retrospective_penalty"
+  baseline: 0.015
+  range: [0.005, 0.5]
+  type: float
+  scale: log
+  tier: 3
+  notes: >
+    Penalty for deviating from prior path. Higher = more committed to
+    existing plan, lower = more willing to replan. Affects the "changing
+    its mind" behavior observed in M5.
+
+planner.analytic_expansion_ratio:
+  ros_path: "planner_server:GridBased.analytic_expansion_ratio"
+  baseline: 2.0
+  range: [0.5, 5.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    How aggressively the planner tries analytic (Dubins/Reeds-Shepp)
+    expansions vs grid search. Higher = more analytic shortcuts attempted.
+
+planner.analytic_expansion_max_length:
+  ros_path: "planner_server:GridBased.analytic_expansion_max_length"
+  baseline: 3.0
+  range: [0.5, 5.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    Max length of analytic expansion segments. If robot does weird
+    snaps/turns at path end, reduce to 1.5. Affects final approach.
+
+planner.analytic_expansion_max_cost:
+  ros_path: "planner_server:GridBased.analytic_expansion_max_cost"
+  baseline: 50.0
+  range: [10.0, 200.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    Max costmap cost allowed for analytic expansions. Higher = allows
+    analytic paths through higher-cost areas (inflation zones).
+
+planner.expected_planner_frequency:
+  ros_path: "planner_server:expected_planner_frequency"
+  baseline: 20.0
+  range: [1.0, 20.0]
+  type: float
+  scale: linear
+  tier: 3
+  notes: >
+    How often the planner replans. 20Hz = constant replanning (current,
+    causes path churn). Reference configs use 1-5Hz. Lower = more
+    committed to current plan, less "changing its mind".
+
+# --- Velocity smoother (separate node, not running in nav2_odom stack) ---
+
+# smoother.max_velocity:
+#   ros_path: "velocity_smoother:max_velocity"
+#   baseline: [0.3, 0.0, 0.8]
+#   tier: 3
+#   notes: Not running in nav2_odom stack. Enable if stack changes.
+
+# smoother.max_accel:
+#   ros_path: "velocity_smoother:max_accel"
+#   baseline: [1.0, 0.0, 2.0]
+#   tier: 3
+
+# smoother.max_decel:
+#   ros_path: "velocity_smoother:max_decel"
+#   baseline: [-1.5, 0.0, -2.5]
+#   tier: 3
+
+# ===========================================================================
+# NOT tunable (static or dangerous)
+# ===========================================================================
+#
+# controller_frequency: 20.0
+#   Explicitly ParameterType::Static. Needs node restart.
+#   Could do "half reset" but deprioritized.
+#
+# motion_model: "Ackermann"
+#   Dangling reference bug — changing at runtime causes segfault.
+#   NEVER change.
+#
+# ConstraintCritic reads vx_max/vx_min via getParentParam but derived
+#   values (max_vel_, min_vel_) are NOT recomputed. Same for
+#   PathAngleCritic (reversing_allowed_). Upstream bug.
+#
+# time_steps: 80
+#   Live-tunable but locked — changes array sizes and interacts with
+#   batch_size. Keep fixed unless explicitly investigating.

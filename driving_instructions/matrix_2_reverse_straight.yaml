@@ -1,0 +1,16 @@
+# Matrix Test 2: Reverse Straight 1.0m
+# Validate: Basic reverse drive without turning
+
+kP: 1.5
+min_velocity: 0.05
+
+instructions:
+  - type: distance
+    meters: -1.0  # Negative = reverse
+    speed: 0.2
+    timeout: 15.0
+    description: "Reverse 1.0m at moderate speed"
+
+  - type: pause
+    seconds: 2.0
+    description: "Settle before measurement"

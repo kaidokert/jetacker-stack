@@ -1,0 +1,35 @@
+services:
+  nav2-dev:
+    image: ros2-jazzy-critics:latest
+    build:
+      context: .
+      dockerfile: docker/critics/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    container_name: nav2-dev
+    working_dir: /workspace/navigation2
+    stdin_open: true
+    tty: true
+    restart: "no"
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      USE_SIM_TIME: ${USE_SIM_TIME}
+    volumes:
+      - ./workdir/ref/navigation2:/workspace/navigation2
+      - ./workdir/nav2_build:/workspace/nav2_build
+    command: sleep infinity
+    # Dev workflow:
+    #   docker compose -f docker-compose.nav2-dev.yml exec nav2-dev bash
+    #   source /opt/ros/$ROS_DISTRO/setup.bash
+    #   cd /workspace/navigation2
+    #   # Build msgs first, then controller overlay:
+    #   colcon build --build-base /workspace/nav2_build/build \
+    #     --install-base /workspace/nav2_build/install \
+    #     --packages-select nav2_critics_msgs \
+    #     --cmake-args -DCMAKE_BUILD_TYPE=Release
+    #   source /workspace/nav2_build/install/setup.bash
+    #   colcon build --build-base /workspace/nav2_build/build \
+    #     --install-base /workspace/nav2_build/install \
+    #     --packages-select nav2_mppi_controller \
+    #     --allow-overriding nav2_mppi_controller \
+    #     --cmake-args -DCMAKE_BUILD_TYPE=Release

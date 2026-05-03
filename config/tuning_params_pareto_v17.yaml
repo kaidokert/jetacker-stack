@@ -1,0 +1,159 @@
+# Pareto Front PFC+PAC Study v17 — M7 Forward 180° with Ghost Extension
+#
+# Ghost extension active: projects synthetic path through cusps.
+# 3-segment execution: FWD arc → REV backup → FWD arc to goal.
+# Reversals are EXPECTED (2 per maneuver) — not penalized.
+#
+# Key changes from v16:
+#   - Objectives: time, pfc_mean, error_yaw, consistency (NO reversals)
+#   - inversion_xy_tolerance locked at 0.15 (tight, drives full arc)
+#   - inversion_yaw_tolerance locked at 0.35 (allows cusp 2 handoff)
+#   - ghost_max_extension locked at 0.70
+#   - min_inversion_horizon sampled [0.40, 1.00] (wider range)
+#   - PFC range [40, 200] (covers both careful and aggressive)
+#
+# 5 reps per trial for reliability scoring
+
+# --- SAMPLED PARAMS (7) ---
+
+PathFollowCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PathFollowCritic.cost_weight"
+  baseline: 51.0
+  range: [40, 200]
+  type: float
+  scale: log
+  tier: 1
+
+PathAlignCritic.cost_weight:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.cost_weight"
+  baseline: 35.0
+  range: [10, 80]
+  type: float
+  scale: log
+  tier: 1
+
+AckermannConstraints.min_turning_r:
+  ros_path: "controller_server:FollowPath.AckermannConstraints.min_turning_r"
+  baseline: 0.25
+  range: [0.12, 0.35]
+  type: float
+  scale: linear
+  tier: 1
+
+wz_std:
+  ros_path: "controller_server:FollowPath.wz_std"
+  baseline: 0.30
+  range: [0.10, 0.50]
+  type: float
+  scale: log
+  tier: 1
+
+temperature:
+  ros_path: "controller_server:FollowPath.temperature"
+  baseline: 0.19
+  range: [0.08, 0.35]
+  type: float
+  scale: log
+  tier: 1
+
+time_steps:
+  ros_path: "controller_server:FollowPath.time_steps"
+  baseline: 52
+  range: [40, 75]
+  type: int
+  scale: linear
+  tier: 1
+
+min_inversion_horizon:
+  ros_path: "controller_server:FollowPath.min_inversion_horizon"
+  baseline: 0.80
+  range: [0.40, 1.00]
+  type: float
+  scale: linear
+  tier: 1
+
+# --- LOCKED PARAMS (14) ---
+
+gamma:
+  ros_path: "controller_server:FollowPath.gamma"
+  locked: 0.012
+  type: float
+  tier: 1
+
+vx_std:
+  ros_path: "controller_server:FollowPath.vx_std"
+  locked: 0.025
+  type: float
+  tier: 1
+
+batch_size:
+  ros_path: "controller_server:FollowPath.batch_size"
+  locked: 1000
+  type: int
+  tier: 1
+
+iteration_count:
+  ros_path: "controller_server:FollowPath.iteration_count"
+  locked: 3
+  type: int
+  tier: 1
+
+PathFollowCritic.offset_from_furthest:
+  ros_path: "controller_server:FollowPath.PathFollowCritic.offset_from_furthest"
+  locked: 5
+  type: int
+  tier: 1
+
+PathFollowCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.PathFollowCritic.threshold_to_consider"
+  locked: 0.01
+  type: float
+  tier: 1
+
+PathAlignCritic.offset_from_furthest:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.offset_from_furthest"
+  locked: 3
+  type: int
+  tier: 1
+
+PathAlignCritic.threshold_to_consider:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.threshold_to_consider"
+  locked: 0.01
+  type: float
+  tier: 1
+
+PathAlignCritic.use_path_orientations:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.use_path_orientations"
+  locked: true
+  type: bool
+  tier: 1
+
+PathAlignCritic.trajectory_point_step:
+  ros_path: "controller_server:FollowPath.PathAlignCritic.trajectory_point_step"
+  locked: 4
+  type: int
+  tier: 1
+
+inversion_xy_tolerance:
+  ros_path: "controller_server:FollowPath.inversion_xy_tolerance"
+  locked: 0.15
+  type: float
+  tier: 1
+
+inversion_yaw_tolerance:
+  ros_path: "controller_server:FollowPath.inversion_yaw_tolerance"
+  locked: 0.35
+  type: float
+  tier: 1
+
+ghost_max_extension:
+  ros_path: "controller_server:FollowPath.ghost_max_extension"
+  locked: 0.70
+  type: float
+  tier: 1
+
+ghost_point_spacing:
+  ros_path: "controller_server:FollowPath.ghost_point_spacing"
+  locked: 0.05
+  type: float
+  tier: 1

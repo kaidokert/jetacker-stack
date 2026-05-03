@@ -1,0 +1,52 @@
+### ekf_filter_node config for fusing wheel odometry + IMU
+# Reference: http://docs.ros.org/en/jazzy/p/robot_localization/
+
+ekf_filter_node:
+  ros__parameters:
+    # Note: use_sim_time set via USE_SIM_TIME env var (-p use_sim_time:=${USE_SIM_TIME})
+    # Update frequency (Hz)
+    frequency: 10.0
+
+    # Frames
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # Sensor timeout (seconds) - if no data received, sensor is ignored
+    sensor_timeout: 1.0
+
+    # Whether to broadcast odom->base_link transform
+    # Set to true so EKF publishes the filtered transform (controller will NOT publish)
+    publish_tf: true
+
+    # --- Odometry from wheel encoders (diff_drive_controller) ---
+    # Topic: /diff_drive_controller/odom
+    # We trust: x, y velocities and yaw rate from encoders
+    # We DO NOT trust absolute position (due to drift/slip)
+    odom0: /diff_drive_controller/odom
+    odom0_config: [false, false, false,  # x, y, z position (don't use - drifts)
+                   false, false, false,  # roll, pitch, yaw orientation (don't use)
+                   true,  true,  false,  # x_dot, y_dot, z_dot velocity (USE - from encoders)
+                   false, false, true,   # roll_dot, pitch_dot, yaw_dot (USE yaw_dot from encoders)
+                   false, false, false]  # x_ddot, y_ddot, z_ddot acceleration
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # --- IMU sensor data (raw from Gazebo simulation) ---
+    # Topic: /slam_bot/imu (raw IMU from gazebo-ros-imu-sensor plugin)
+    # Note: imu_filter_madgwick DISABLED - using raw simulated IMU directly
+    # Gazebo IMU provides orientation, so we can use it directly
+    # We trust: orientation (roll, pitch, yaw) and angular velocities
+    # We DO NOT trust: linear acceleration in simulation (tends to be noisy)
+    imu0: /slam_bot/imu
+    imu0_config: [false, false, false,  # x, y, z position
+                  true,  true,  true,   # roll, pitch, yaw orientation (USE - from IMU)
+                  false, false, false,  # x_dot, y_dot, z_dot velocity
+                  true,  true,  true,   # roll_dot, pitch_dot, yaw_dot (USE - from gyro)
+                  false, false, false]  # x_ddot, y_ddot, z_ddot acceleration
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true

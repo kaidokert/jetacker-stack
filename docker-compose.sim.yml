@@ -1,0 +1,849 @@
+
+# ==============================================================================
+# Simulation overlay - Gazebo simulation services and networking
+# ==============================================================================
+# Combined with docker-compose.core.yml via COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.core.yml;docker-compose.sim.yml   (Win)
+#   COMPOSE_FILE=docker-compose.core.yml:docker-compose.sim.yml   (Linux/Mac)
+#
+# This file:
+#   - Defines debug and foxglove with bridge networking
+#   - Defines Gazebo instances, bridges, and sim-only infrastructure
+#   - Patches shared-namespace networking onto all core jetacker services
+#   - Adds sim-specific depends_on to core services
+#   - Defines entire slam_bot stack (sim-only, no hardware equivalent)
+
+# ==============================================================================
+# YAML ANCHORS - Simulation configuration patterns
+# ==============================================================================
+# IMPORTANT: Anchors are file-local in Docker Compose — must redeclare here.
+
+x-ros2-env: &ros2-env
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+  USE_SIM_TIME: ${USE_SIM_TIME}
+
+x-restart-policy: &restart-policy
+  restart: "no"
+  stop_grace_period: "1s"
+
+# Bridge network for debug and foxglove (anchor point for shared namespace)
+x-ros2-network: &ros2-network
+  networks:
+    - ros2
+  ipc: shareable
+  restart: "no"
+  stop_grace_period: "1s"
+  environment:
+    <<: *ros2-env
+
+# Minimal anchor to patch shared-namespace networking onto core services.
+# Core services already have restart-policy, environment, etc.
+# CRITICAL: Required for ROS2 DDS discovery. See docs/architecture/NETWORKING.md
+x-sim-network: &sim-network
+  network_mode: service:debug
+  ipc: service:debug
+
+# Full anchor for new sim-only services (networking + restart + env)
+x-sim-service: &sim-service
+  network_mode: service:debug
+  ipc: service:debug
+  restart: "no"
+  stop_grace_period: "1s"
+  environment:
+    <<: *ros2-env
+
+networks:
+  ros2:
+    driver: bridge
+
+volumes:
+  x11-socket:
+
+services:
+  # ============================================================================
+  # Infrastructure services (full definitions)
+  # ============================================================================
+
+  # Debug container - bridge network, shareable IPC (anchor point)
+  # Port 9090 exposed here because rosbridge shares this network namespace
+  debug:
+    <<: *ros2-network
+    build:
+      context: .
+      dockerfile: docker/debug/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-debug:latest
+    container_name: debug
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./debug:/workspace/debug
+      - ./workdir:/workspace/workdir
+      - ./tools:/workspace/tools
+      - ./logs:/workspace/logs
+      - ./driving_instructions:/workspace/driving_instructions:ro
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Foxglove bridge for visualization
+  foxglove:
+    <<: *ros2-network
+    build:
+      context: .
+      dockerfile: docker/foxglove/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-foxglove:latest
+    container_name: foxglove
+    restart: always
+    environment:
+      <<: *ros2-env
+      AMENT_PREFIX_PATH: "/opt/ros/${ROS_DISTRO}:/workspace/models"
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./models:/workspace/models:ro
+    command: ros2 run foxglove_bridge foxglove_bridge
+    ports:
+      - "8765:8765"
+    profiles:
+      - calib
+      - slam
+      - nav2
+      - jetacker
+      - jetacker-nav2
+
+  # rosbridge WebSocket bridge for dashboard/ROS web clients
+  # Uses shared namespace (service:debug) so DDS service calls reach all nodes
+  rosbridge:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    container_name: rosbridge
+    command: >
+      bash -lc '
+      source /opt/ros/${ROS_DISTRO}/setup.bash &&
+      if ! ros2 pkg prefix rosbridge_server >/dev/null 2>&1; then
+        apt-get update &&
+        apt-get install -y ros-${ROS_DISTRO}-rosbridge-suite;
+      fi &&
+      ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9090
+      '
+    # Port 9090 is published via the debug container (shared namespace owner)
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Dashboard container (REPLACED by host-side dashboard/api/host_api.py)
+  # Kept behind dashboard-container profile for reference / CI use.
+  # To use: docker compose --profile dashboard-container up dashboard
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    depends_on:
+      rosbridge:
+        condition: service_started
+    environment:
+      ROSBRIDGE_URL: ws://localhost:9090
+      WORKSPACE_DIR: /workspace
+    volumes:
+      - ./dashboard/web/dist:/app/static:ro
+      - ./dashboard/api/main.py:/app/main.py:ro
+      - .:/workspace:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8080:8080"
+    profiles:
+      - dashboard-container
+
+  # X11 forwarding test
+  x11-test:
+    build:
+      context: .
+      dockerfile: docker/x11-test/Dockerfile
+    image: x11-test:latest
+    container_name: x11-test
+    network_mode: host
+    environment:
+      DISPLAY: host.docker.internal:0
+    profiles:
+      - test
+
+  # Persistent X11 Display Server (VNC + noVNC)
+  x11-server:
+    build:
+      context: .
+      dockerfile: docker/x11-server/Dockerfile
+    image: x11-server:latest
+    container_name: x11-server
+    <<: *restart-policy
+    volumes:
+      - x11-socket:/tmp/.X11-unix
+    ports:
+      - "5900:5900"
+      - "6080:6080"
+    profiles:
+      - x11
+    environment:
+      VNC_RESOLUTION: ${VNC_RESOLUTION}
+
+  # URDF/SDF Model Viewer in Gazebo
+  viewer:
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: viewer
+    <<: *restart-policy
+    environment:
+      <<: *ros2-env
+      DISPLAY: :99
+      MODEL_FILE: ${MODEL_FILE}
+    volumes:
+      - x11-socket:/tmp/.X11-unix
+      - ./docker/viewer-world:/workspace/viewer-world:ro
+      - ./worlds:/workspace/worlds:ro
+      - ./tools:/workspace/tools:ro
+      - ./workdir:/workspace/workdir:rw
+    command: /workspace/viewer-world/start_viewer.sh
+    profiles:
+      - viewer
+
+  # ============================================================================
+  # Build images — sim-specific depends_on (merge with core)
+  # ============================================================================
+
+  # Gazebo image — adds Gazebo Sim and ros2_control to base
+  ros2-gazebo:
+    build:
+      context: .
+      dockerfile: docker/gazebo/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    depends_on:
+      ros2-base:
+        condition: service_started
+    scale: 0
+
+  # Overlay — add depends_on ros2-gazebo (merges with core)
+  ros2-overlay:
+    depends_on:
+      ros2-gazebo:
+        condition: service_started
+
+  # Nav2 — add depends_on ros2-gazebo (merges with core)
+  ros2-nav2:
+    depends_on:
+      ros2-gazebo:
+        condition: service_started
+
+  # ============================================================================
+  # Gazebo instances (full definitions)
+  # ============================================================================
+
+  # slam_bot Gazebo
+  gazebo:
+    <<: *sim-service
+    build:
+      context: .
+      dockerfile: docker/gazebo/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: gazebo
+    environment:
+      <<: *ros2-env
+      DISPLAY: :99
+      GZ_SIM_SYSTEM_PLUGIN_PATH: /opt/ros/${ROS_DISTRO}/lib
+      WORLD_FILE: ${SLAMBOT_WORLD}
+    volumes:
+      - x11-socket:/tmp/.X11-unix
+      - ./config:/workspace/config:ro
+      - ./ros:/workspace/ros:ro
+      - ./worlds:/workspace/worlds:ro
+      - ./logs:/workspace/logs:rw
+      - ./workdir/root/.gz:/root/.gz
+    command: bash -c "exec gz sim -v 4 -r /workspace/worlds/$$WORLD_FILE"
+    healthcheck:
+      test: |
+        bash -c '
+          source /opt/ros/jazzy/setup.bash || exit 1
+
+          # Check if /clock is publishing
+          if ! timeout 2 ros2 topic list | grep -q /clock; then
+            rm -f /tmp/clock_stable
+            exit 1
+          fi
+
+          # Grace period: wait 3s after /clock first appears
+          if [ ! -f /tmp/clock_stable ]; then
+            date +%s > /tmp/clock_stable
+            exit 1
+          fi
+
+          ELAPSED=$$(($(date +%s) - $(cat /tmp/clock_stable)))
+          if [ $$ELAPSED -lt 3 ]; then
+            exit 1
+          fi
+
+          exit 0
+        '
+      interval: 1s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      ros2-base:
+        condition: service_started
+      debug:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # Jetacker Gazebo
+  jetacker-gazebo:
+    <<: *sim-service
+    build:
+      context: .
+      dockerfile: docker/gazebo/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-gazebo
+    environment:
+      <<: *ros2-env
+      DISPLAY: :99
+      GZ_SIM_SYSTEM_PLUGIN_PATH: /opt/ros/${ROS_DISTRO}/lib:/workspace/gz_plugins/world_state_publisher/build
+      WORLD_FILE: ${JETACKER_WORLD}
+    volumes:
+      - x11-socket:/tmp/.X11-unix
+      - ./config:/workspace/config:ro
+      - ./models:/workspace/models:ro
+      - ./ros:/workspace/ros:ro
+      - ./worlds:/workspace/worlds:ro
+      - ./logs:/workspace/logs:rw
+      - ./workdir/root/.gz:/root/.gz
+      - ./workdir/gz_plugins:/workspace/gz_plugins:rw
+    command: >-
+      bash -c "/workspace/gz_plugins/build-gz-plugins.sh
+      /workspace/gz_plugins/world_state_publisher &&
+      exec gz sim -v 4 -r /workspace/worlds/$$WORLD_FILE"
+    healthcheck:
+      test: |
+        bash -c '
+          source /opt/ros/jazzy/setup.bash || exit 1
+
+          # Check if /clock is publishing
+          if ! timeout 2 ros2 topic list | grep -q /clock; then
+            rm -f /tmp/clock_stable
+            exit 1
+          fi
+
+          # Grace period: wait 3s after /clock first appears
+          if [ ! -f /tmp/clock_stable ]; then
+            date +%s > /tmp/clock_stable
+            exit 1
+          fi
+
+          ELAPSED=$$(($(date +%s) - $(cat /tmp/clock_stable)))
+          if [ $$ELAPSED -lt 3 ]; then
+            exit 1
+          fi
+
+          exit 0
+        '
+      interval: 1s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    depends_on:
+      ros2-base:
+        condition: service_started
+      debug:
+        condition: service_started
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # ============================================================================
+  # Sim-only bridge services (full definitions)
+  # ============================================================================
+
+  # Jetacker clock bridge — Bridge Gazebo /clock to ROS2
+  jetacker-clock-bridge:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-clock-bridge
+    command: ros2 run ros_gz_bridge parameter_bridge /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock --ros-args -r __node:=clock_bridge
+    depends_on:
+      jetacker-gazebo:
+        condition: service_started
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Jetacker ground truth bridge — Bridge Gazebo ground truth pose to ROS
+  jetacker-ground-truth-bridge:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-ground-truth-bridge
+    volumes:
+      - ./worlds:/workspace/worlds:ro
+    command: >
+      ros2 run ros_gz_bridge parameter_bridge
+      /world/jetacker_world/create@ros_gz_interfaces/srv/SpawnEntity
+      /world/jetacker_world/remove@ros_gz_interfaces/srv/DeleteEntity
+      --ros-args
+      -r __node:=ground_truth_bridge
+      -p config_file:=/workspace/worlds/jetacker/jetacker_bridge.yaml
+    depends_on:
+      jetacker-gazebo:
+        condition: service_started
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Jetacker hardware bridge — Python bridge mimicking STM32 serial bridge
+  jetacker-hardware-bridge:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-hardware-bridge
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: bash -c "sleep 2 && source /opt/ros/jazzy/setup.bash && python3 /workspace/ros/gazebo_hardware_bridge.py --ros-args -p use_sim_time:=${USE_SIM_TIME}"
+    depends_on:
+      jetacker-gazebo:
+        condition: service_started
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # ============================================================================
+  # Networking patches for core jetacker services (merge with core.yml)
+  # Each entry adds sim networking and any sim-specific depends_on
+  # ============================================================================
+
+  health-check:
+    <<: *sim-network
+
+  test-drive:
+    <<: *sim-network
+
+  jetacker-robot-state-publisher:
+    <<: *sim-network
+    depends_on:
+      jetacker-gazebo:
+        condition: service_started
+
+  jetacker-controller-manager:
+    <<: *sim-network
+    depends_on:
+      jetacker-hardware-bridge:
+        condition: service_started
+
+  jetacker-controller-spawner:
+    <<: *sim-network
+
+  jetacker-passive-joint-publisher:
+    <<: *sim-network
+
+  jetacker-joint-state-merger:
+    <<: *sim-network
+
+  jetacker-cmd-vel-relay:
+    <<: *sim-network
+
+  jetacker-ekf-localization:
+    <<: *sim-network
+    depends_on:
+      ros2-overlay:
+        condition: service_started
+      jetacker-gazebo:
+        condition: service_healthy
+      jetacker-ground-truth-bridge:
+        condition: service_started
+
+  jetacker-slam-toolbox:
+    <<: *sim-network
+    depends_on:
+      jetacker-gazebo:
+        condition: service_healthy
+      jetacker-ground-truth-bridge:
+        condition: service_started
+
+  jetacker-map-server:
+    <<: *sim-network
+
+  jetacker-amcl:
+    <<: *sim-network
+
+  jetacker-static-map-odom:
+    <<: *sim-network
+
+  jetacker-controller-server:
+    <<: *sim-network
+
+  jetacker-planner-server:
+    <<: *sim-network
+
+  jetacker-behavior-server:
+    <<: *sim-network
+
+  jetacker-bt-navigator:
+    <<: *sim-network
+
+  jetacker-bt-topology-publisher:
+    <<: *sim-network
+
+  jetacker-waypoint-follower:
+    <<: *sim-network
+
+  jetacker-velocity-smoother:
+    <<: *sim-network
+
+  jetacker-nav2-lifecycle-manager:
+    <<: *sim-network
+
+  jetacker-nav2-odom-lifecycle-manager:
+    <<: *sim-network
+
+  jetacker-tf-gate-checker:
+    <<: *sim-network
+
+  # ============================================================================
+  # slam_bot stack (sim-only — no hardware equivalent)
+  # ============================================================================
+
+  # Bridge between ROS2 and Gazebo topics (cmd_vel, odometry, scan)
+  ros-gz-bridge:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: ros-gz-bridge
+    volumes:
+      - ./worlds:/workspace/worlds:ro
+    command: ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=/workspace/worlds/slam/slam_bridge.yaml
+    depends_on:
+      gazebo:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # Twist->TwistStamped relay for Foxglove teleop and Nav2
+  cmd-vel-relay:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-base:latest
+    container_name: cmd-vel-relay
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/cmd_vel_relay.py
+      --ros-args -r /cmd_vel_stamped:=/diff_drive_controller/cmd_vel
+    depends_on:
+      gazebo:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # Robot state publisher — slam_bot URDF
+  robot-state-publisher:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: robot-state-publisher
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      /bin/bash -c "
+      ros2 run robot_state_publisher robot_state_publisher --ros-args -p robot_description:=\"\$(cat /workspace/config/slam_bot/slam_bot.urdf)\" -p use_sim_time:=${USE_SIM_TIME} -p publish_frequency:=10.0 -r __node:=robot_state_publisher
+      "
+    depends_on:
+      gazebo:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # Controller spawner — diff_drive_controller + joint_state_broadcaster
+  controller-spawner:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: controller-spawner
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      /bin/bash -c "
+      echo 'Waiting for controller_manager to be ready...';
+      echo 'Spawning diff_drive_controller...';
+      ros2 run controller_manager spawner diff_drive_controller --param-file /workspace/config/slam_bot/diff_drive_controller.yaml --ros-args -p use_sim_time:=${USE_SIM_TIME};
+      echo 'Spawning joint_state_broadcaster...';
+      ros2 run controller_manager spawner joint_state_broadcaster --ros-args -p use_sim_time:=${USE_SIM_TIME};
+      echo 'Setting scaled wheel parameters...';
+      ros2 param set /diff_drive_controller wheel_radius 0.05;
+      ros2 param set /diff_drive_controller wheel_separation 0.208342;
+      echo 'Wheel parameters updated: radius=0.05m, separation=0.208m';
+      echo 'Controllers spawned successfully!';
+      "
+    depends_on:
+      gazebo:
+        condition: service_started
+      robot-state-publisher:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # EKF sensor fusion — slam_bot
+  ekf-localization:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    container_name: ekf-localization
+    volumes:
+      - ./config:/workspace/config:ro
+    command: ros2 run robot_localization ekf_node --ros-args -p use_sim_time:=${USE_SIM_TIME} --params-file /workspace/config/slam_bot/ekf.yaml
+    depends_on:
+      ros2-overlay:
+        condition: service_started
+      gazebo:
+        condition: service_healthy
+      ros-gz-bridge:
+        condition: service_started
+      controller-spawner:
+        condition: service_started
+    profiles:
+      - calib
+      - slam
+      - nav2
+
+  # SLAM Toolbox — slam_bot
+  slam-toolbox:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: slam-toolbox
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./maps:/workspace/maps:rw
+    command: >
+      ros2 launch slam_toolbox online_async_launch.py
+        slam_params_file:=/workspace/config/jetacker/slam_toolbox.yaml
+        use_sim_time:=${USE_SIM_TIME}
+    depends_on:
+      gazebo:
+        condition: service_started
+      ros-gz-bridge:
+        condition: service_started
+      ekf-localization:
+        condition: service_started
+    profiles:
+      - slam
+
+  # ============================================================================
+  # slam_bot Nav2 stack (sim-only)
+  # ============================================================================
+
+  # Map Server
+  map-server:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: map-server
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./maps:/workspace/maps:ro
+    command: >
+      ros2 run nav2_map_server map_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p yaml_filename:=${SLAMBOT_MAP}
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # AMCL — Adaptive Monte Carlo Localization
+  amcl:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: amcl
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_amcl amcl
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+      map-server:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Controller Server — Local trajectory tracking
+  controller-server:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: controller-server
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_controller controller_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+      -r cmd_vel:=/slam_bot/cmd_vel
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Planner Server — Global path planning
+  planner-server:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: planner-server
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_planner planner_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+      map-server:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Behavior Server — Recovery behaviors
+  behavior-server:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: behavior-server
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_behaviors behavior_server
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # BT Navigator — Behavior tree coordinator
+  bt-navigator:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: bt-navigator
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_bt_navigator bt_navigator
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      controller-server:
+        condition: service_started
+      planner-server:
+        condition: service_started
+      behavior-server:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Waypoint Follower
+  waypoint-follower:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: waypoint-follower
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_waypoint_follower waypoint_follower
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      bt-navigator:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Velocity Smoother
+  velocity-smoother:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: velocity-smoother
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_velocity_smoother velocity_smoother
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      --params-file /workspace/config/slam_bot/nav2_params.yaml
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      gazebo:
+        condition: service_started
+    profiles:
+      - nav2
+
+  # Nav2 Lifecycle Manager
+  nav2-lifecycle-manager:
+    <<: *sim-service
+    image: ros2-${ROS_DISTRO}-nav2:latest
+    container_name: nav2-lifecycle-manager
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run nav2_lifecycle_manager lifecycle_manager
+      --ros-args
+      -p use_sim_time:=${USE_SIM_TIME}
+      -p autostart:=true
+      -p node_names:=['map_server','amcl','controller_server','planner_server','behavior_server','bt_navigator','waypoint_follower','velocity_smoother']
+    depends_on:
+      ros2-nav2:
+        condition: service_started
+      map-server:
+        condition: service_started
+      amcl:
+        condition: service_started
+      controller-server:
+        condition: service_started
+      planner-server:
+        condition: service_started
+      behavior-server:
+        condition: service_started
+      bt-navigator:
+        condition: service_started
+    profiles:
+      - nav2

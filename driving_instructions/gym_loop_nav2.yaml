@@ -1,0 +1,56 @@
+waypoints:
+- name: 'Turn 2: LEFT to north'
+  x: 1.224
+  y: -0.6
+  heading_deg: 90.0
+  qx: 0.0
+  qy: 0.0
+  qz: 0.707
+  qw: 0.707
+  tolerance_xy: 0.30
+  tolerance_yaw: 0.3
+  timeout: 30.0
+- name: 'Turn 3: LEFT to west'
+  x: 0.762
+  y: 1.162
+  heading_deg: 180.0
+  qx: 0.0
+  qy: 0.0
+  qz: 1.0
+  qw: 0.0
+  tolerance_xy: 0.15
+  tolerance_yaw: 0.2
+  timeout: 30.0
+- name: 'Turn 4: LEFT to south'
+  x: -1.3
+  y: 0.7
+  heading_deg: 270.0
+  qx: 0.0
+  qy: 0.0
+  qz: -0.707
+  qw: 0.707
+  tolerance_xy: 0.15
+  tolerance_yaw: 0.2
+  timeout: 30.0
+- name: 'Turn 5: LEFT to east'
+  x: -0.838
+  y: -0.962
+  heading_deg: 0.0
+  qx: 0.0
+  qy: 0.0
+  qz: 0.0
+  qw: 1.0
+  tolerance_xy: 0.15
+  tolerance_yaw: 0.2
+  timeout: 30.0
+- name: 'Leg 7: North to center'
+  x: -0.276
+  y: -0.1
+  heading_deg: 90.0
+  qx: 0.0
+  qy: 0.0
+  qz: 0.707
+  qw: 0.707
+  tolerance_xy: 0.15
+  tolerance_yaw: 0.2
+  timeout: 30.0

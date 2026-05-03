@@ -1,0 +1,62 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50  # Hz
+
+    diff_drive_controller:
+      type: diff_drive_controller/DiffDriveController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+diff_drive_controller:
+  ros__parameters:
+    # Joint names
+    left_wheel_names: ["left_wheel_joint"]
+    right_wheel_names: ["right_wheel_joint"]
+
+    # Robot geometry (scaled to 1/6 size)
+    wheel_separation: 0.208342  # 208mm center-to-center (measured from scaled URDF)
+    wheel_radius: 0.05  # 50mm radius (scaled from 300mm)
+
+    # Odometry parameters
+    publish_rate: 50.0
+    odom_frame_id: odom
+    base_frame_id: base_link
+    pose_covariance_diagonal: [0.001, 0.001, 0.0, 0.0, 0.0, 0.001]
+    twist_covariance_diagonal: [0.001, 0.0, 0.0, 0.0, 0.0, 0.001]
+
+    # TF broadcasting - DISABLED because EKF publishes filtered odom->base_link
+    # Controller still publishes odometry messages to /diff_drive_controller/odom
+    enable_odom_tf: false
+
+    # Velocity commands
+    cmd_vel_timeout: 0.5
+
+    # Velocity limits
+    linear.x.max_velocity: 1.0
+    linear.x.min_velocity: -1.0
+    angular.z.max_velocity: 2.0
+    angular.z.min_velocity: -2.0
+
+    # Acceleration/deceleration limits
+    # Note: "reverse" parameters are for negative velocities (backwards/CW rotation)
+
+    # Linear acceleration (forward/backward)
+    linear.x.has_acceleration_limits: true
+    linear.x.max_acceleration: 0.5               # m/s² - forward acceleration
+    linear.x.max_deceleration: -0.5              # m/s² - forward braking (2x faster)
+    linear.x.min_acceleration: -0.5              # m/s² - backward acceleration
+    linear.x.min_deceleration: 0.0               # m/s² - backward braking
+
+    # Angular acceleration (rotation)
+    # Note: Your test uses -90° (CW) turns, so _reverse parameters ARE used!
+    # IMPORTANT: Deceleration slower than acceleration to allow longer coast time
+    angular.z.has_acceleration_limits: true
+    angular.z.max_acceleration: 1.0              # rad/s² - CCW acceleration
+    angular.z.max_deceleration: -1.0             # rad/s² - CCW braking (SLOWER for gentler stop)
+    angular.z.min_acceleration: -1.0             # rad/s² - CW acceleration
+    angular.z.min_deceleration: 0.0              # rad/s² - CW braking
+
+joint_state_broadcaster:
+  ros__parameters:
+    {}  # No additional parameters needed

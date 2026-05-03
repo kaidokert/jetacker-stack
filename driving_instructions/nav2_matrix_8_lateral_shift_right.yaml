@@ -1,0 +1,18 @@
+# Nav2 Matrix Test 8: Lateral Shift Right 0.3m
+# Robot starts facing East (0°), target is 30cm to the right (south), same heading.
+# Tests MPPI's ability to resolve small lateral offsets — Ackermann can't crab,
+# must do an S-curve or multi-point turn.
+# This is a known failure mode: robot sits parallel to goal but can't close the gap.
+
+waypoints:
+  - name: "Matrix 8: Lateral shift right 0.3m"
+    x: 0.0
+    y: 0.4
+    heading_deg: 0.0  # Same heading as start — facing East
+    qx: 0.0
+    qy: 0.0
+    qz: 0.0
+    qw: 1.0
+    tolerance_xy: 0.10
+    tolerance_yaw: 0.70
+    timeout: 90.0  # Relaxed — S-curve + reverse needs time

@@ -1,0 +1,96 @@
+# Bridge configuration for Jetacker
+# Ground truth pose from WorldPosePublisher (world-level plugin)
+
+# Ground truth pose from Gazebo (Gazebo -> ROS2)
+# Using WorldStatePublisher custom plugin (survives reset)
+# Topic: /world/jetacker_world/model/jetacker/pose
+# WorldStatePublisher is a world-level plugin that survives world resets
+# (model-level plugins fail after reset)
+- ros_topic_name: "/jetacker/ground_truth"
+  gz_topic_name: "/world/jetacker_world/model/jetacker/pose"
+  ros_type_name: "geometry_msgs/msg/PoseStamped"
+  gz_type_name: "gz.msgs.Pose"
+  direction: GZ_TO_ROS
+
+# Ground truth joint states from Gazebo (Gazebo -> ROS2)
+# Using WorldStatePublisher custom plugin (same as pose above)
+# Provides actual Gazebo joint positions/velocities for closed-loop control
+# Replaces open-loop velocity integration in hardware bridge
+- ros_topic_name: "/gz_joint_states"
+  gz_topic_name: "/world/jetacker_world/model/jetacker/joint_states"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# IMU sensor (Gazebo -> ROS2)
+# Matches real robot topic name: /imu/data_raw (published by jetacker_hardware.py)
+- ros_topic_name: "/imu/data_raw"
+  gz_topic_name: "/jetacker/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# Lidar sensor (Gazebo -> ROS2)
+# For SLAM: slam_toolbox uses scan data to build map
+# Remap from robot-specific Gazebo topic to standard /scan topic
+- ros_topic_name: "/scan"
+  gz_topic_name: "/jetacker/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# Rear-left TOF sensor (Gazebo -> ROS2)
+# For Nav2 backing up - rear corner obstacle detection
+- ros_topic_name: "/tof_rear_left"
+  gz_topic_name: "/jetacker/tof_rear_left"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# Rear-right TOF sensor (Gazebo -> ROS2)
+# For Nav2 backing up - rear corner obstacle detection
+- ros_topic_name: "/tof_rear_right"
+  gz_topic_name: "/jetacker/tof_rear_right"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# NOTE: Gazebo health monitoring uses /clock topic (already bridged)
+# /clock acts as implicit heartbeat - stops if Gazebo crashes/hangs
+# No need to bridge WorldStatistics (no standard ROS mapping exists)
+
+# ============================================================================
+# Joint Commands (ROS2 -> Gazebo) - Replace subprocess calls
+# ============================================================================
+
+# Position commands
+- ros_topic_name: "/gz_cmd/turret_joint/position"
+  gz_topic_name: "/model/jetacker/joint/turret_joint/0/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/gz_cmd/front_left_wheel_steering_joint/position"
+  gz_topic_name: "/model/jetacker/joint/front_left_wheel_steering_joint/0/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/gz_cmd/front_right_wheel_steering_joint/position"
+  gz_topic_name: "/model/jetacker/joint/front_right_wheel_steering_joint/0/cmd_pos"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+# Velocity commands
+- ros_topic_name: "/gz_cmd/rear_left_wheel_joint/velocity"
+  gz_topic_name: "/model/jetacker/joint/rear_left_wheel_joint/cmd_vel"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ
+
+- ros_topic_name: "/gz_cmd/rear_right_wheel_joint/velocity"
+  gz_topic_name: "/model/jetacker/joint/rear_right_wheel_joint/cmd_vel"
+  ros_type_name: "std_msgs/msg/Float64"
+  gz_type_name: "gz.msgs.Double"
+  direction: ROS_TO_GZ

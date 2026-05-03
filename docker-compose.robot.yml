@@ -1,0 +1,319 @@
+
+# ==============================================================================
+# Robot overlay - physical Jetacker hardware services
+# ==============================================================================
+# Combined with docker-compose.core.yml via COMPOSE_FILE in .env:
+#   COMPOSE_FILE=docker-compose.core.yml:docker-compose.robot.yml
+#
+# This file:
+#   - Defines debug and foxglove with host networking
+#   - Patches host networking onto all core jetacker services
+#   - Defines hardware services: STM32, YDLidar, IMU, camera, joystick
+#   - Adds hardware-specific depends_on to core services
+
+# Minimal anchor to patch host networking onto core services
+x-robot-network: &robot-network
+  network_mode: host
+  ipc: host
+
+# Full anchor for hardware services
+x-robot-service: &robot-service
+  network_mode: host
+  ipc: host
+  environment:
+    ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+    USE_SIM_TIME: ${USE_SIM_TIME}
+  restart: "no"
+  stop_grace_period: "1s"
+
+services:
+  # Debug container - host networking on robot
+  debug:
+    build:
+      context: .
+      dockerfile: docker/debug/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-debug:latest
+    container_name: debug
+    network_mode: host
+    ipc: host
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      USE_SIM_TIME: ${USE_SIM_TIME}
+    restart: "no"
+    stop_grace_period: "1s"
+    volumes:
+      - ./debug:/workspace/debug
+      - ./workdir:/workspace/workdir
+      - ./tools:/workspace/tools
+      - ./logs:/workspace/logs
+      - ./driving_instructions:/workspace/driving_instructions:ro
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  # Foxglove bridge - host networking on robot
+  foxglove:
+    build:
+      context: .
+      dockerfile: docker/foxglove/Dockerfile
+      args:
+        ROS_DISTRO: ${ROS_DISTRO}
+    image: ros2-${ROS_DISTRO}-foxglove:latest
+    container_name: foxglove
+    network_mode: host
+    ipc: host
+    restart: always
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      USE_SIM_TIME: ${USE_SIM_TIME}
+      AMENT_PREFIX_PATH: "/opt/ros/${ROS_DISTRO}:/workspace/models"
+    volumes:
+      - ./config:/workspace/config:ro
+      - ./models:/workspace/models:ro
+    command: ros2 run foxglove_bridge foxglove_bridge
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # rosbridge WebSocket bridge for dashboard/ROS web clients
+  rosbridge:
+    image: ros2-${ROS_DISTRO}-overlay:latest
+    container_name: rosbridge
+    network_mode: host
+    ipc: host
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      USE_SIM_TIME: ${USE_SIM_TIME}
+    restart: always
+    command: >
+      bash -lc '
+      source /opt/ros/${ROS_DISTRO}/setup.bash &&
+      if ! ros2 pkg prefix rosbridge_server >/dev/null 2>&1; then
+        apt-get update &&
+        apt-get install -y ros-${ROS_DISTRO}-rosbridge-suite;
+      fi &&
+      ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=9090
+      '
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Dashboard API + static frontend (Phase 1 read-only observability)
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    network_mode: host
+    ipc: host
+    depends_on:
+      rosbridge:
+        condition: service_started
+    environment:
+      ROSBRIDGE_URL: ws://localhost:9090
+    restart: always
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # ==============================================================================
+  # Patch host networking onto all core services
+  # ==============================================================================
+
+  health-check:
+    <<: *robot-network
+
+  test-drive:
+    <<: *robot-network
+
+  jetacker-robot-state-publisher:
+    <<: *robot-network
+
+  jetacker-controller-manager:
+    <<: *robot-network
+    depends_on:
+      jetacker-hardware:
+        condition: service_started
+
+  jetacker-controller-spawner:
+    <<: *robot-network
+
+  jetacker-passive-joint-publisher:
+    <<: *robot-network
+
+  jetacker-joint-state-merger:
+    <<: *robot-network
+
+  jetacker-cmd-vel-relay:
+    <<: *robot-network
+
+  jetacker-ekf-localization:
+    <<: *robot-network
+    depends_on:
+      jetacker-imu-filter:
+        condition: service_started
+
+  jetacker-slam-toolbox:
+    <<: *robot-network
+    depends_on:
+      jetacker-ydlidar:
+        condition: service_started
+
+  jetacker-map-server:
+    <<: *robot-network
+
+  jetacker-amcl:
+    <<: *robot-network
+
+  jetacker-static-map-odom:
+    <<: *robot-network
+
+  jetacker-controller-server:
+    <<: *robot-network
+
+  jetacker-planner-server:
+    <<: *robot-network
+
+  jetacker-behavior-server:
+    <<: *robot-network
+
+  jetacker-bt-navigator:
+    <<: *robot-network
+
+  jetacker-bt-topology-publisher:
+    <<: *robot-network
+
+  jetacker-waypoint-follower:
+    <<: *robot-network
+
+  jetacker-velocity-smoother:
+    <<: *robot-network
+
+  jetacker-nav2-lifecycle-manager:
+    <<: *robot-network
+
+  jetacker-nav2-odom-lifecycle-manager:
+    <<: *robot-network
+
+  jetacker-tf-gate-checker:
+    <<: *robot-network
+
+  # ==============================================================================
+  # Hardware services (robot-only)
+  # ==============================================================================
+
+  # STM32 hardware interface - joystick input + motor/servo control
+  jetacker-hardware:
+    <<: *robot-service
+    image: jetacker-joy:latest
+    container_name: jetacker-hardware
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    volumes:
+      - ./ros/jetacker_hardware.py:/workspace/jetacker_hardware.py:ro
+      - ./ros/ros_robot_controller_sdk.py:/workspace/ros_robot_controller_sdk.py:ro
+    command: >
+      python3 /workspace/jetacker_hardware.py
+      --ros-args
+      -p device:=/dev/ttyACM0
+      -p motor_cmd_per_rad_s:=0.164
+      -p radians_to_servo_units:=310.0
+      -p servo_duration:=0.2
+      -p enable_debug_commands:=false
+      -p enable_hardware_debug:=false
+      -p max_steering_angle_deg:=33.0
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # YDLidar G4 - 2D laser scanner
+  jetacker-ydlidar:
+    <<: *robot-service
+    image: ydlidar:latest
+    container_name: jetacker-ydlidar
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+    volumes:
+      - ./config:/workspace/config:ro
+    command: >
+      ros2 run ydlidar_ros2_driver ydlidar_ros2_driver_node
+        --ros-args --params-file /workspace/config/lidar_g4.yaml
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # IMU filter - Madgwick orientation estimator
+  jetacker-imu-filter:
+    <<: *robot-service
+    image: ydlidar:latest
+    container_name: jetacker-imu-filter
+    depends_on:
+      - jetacker-hardware
+    command: >
+      ros2 run imu_filter_madgwick imu_filter_madgwick_node --ros-args
+      -p use_mag:=false
+      -p publish_tf:=false
+      -p world_frame:=enu
+      -p zeta:=0.001
+      -p gain:=0.4
+      -p orientation_stddev:=0.05
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Camera - H.264 video streaming (1080p30)
+  camera:
+    <<: *robot-service
+    image: ros2-jazzy-gstreamer:latest
+    container_name: camera
+    privileged: true
+    devices:
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/mpp_service:/dev/mpp_service
+      - /dev/media0:/dev/media0
+      - /dev/rga:/dev/rga
+    group_add:
+      - video
+    environment:
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID}
+      USE_SIM_TIME: ${USE_SIM_TIME}
+      GST_REGISTRY_UPDATE: "yes"
+    volumes:
+      - ./camera_config/h265_1080p60_tee.yaml:/tmp/camera_params.yaml:ro
+      - /dev/video-enc0:/dev/video-enc0:ro
+      - /dev/video-dec0:/dev/video-dec0:ro
+    command: >
+      bash -c "rm -rf ~/.cache/gstreamer-1.0 &&
+      ros2 run ros2_gst_camera gst_camera_node_tee --ros-args --params-file /tmp/camera_params.yaml"
+    profiles:
+      - jetacker
+      - jetacker-nav2
+
+  # Joystick relay - Twist to TwistStamped for manual driving
+  # Stop this container to hand control to Nav2 autonomous mode
+  jetacker-twist-relay:
+    <<: *robot-service
+    image: ros2-${ROS_DISTRO}-gazebo:latest
+    container_name: jetacker-twist-relay
+    depends_on:
+      - jetacker-hardware
+      - jetacker-controller-spawner
+    volumes:
+      - ./ros:/workspace/ros:ro
+    command: >
+      python3 /workspace/ros/twist_relay.py
+      --ros-args
+      -p max_speed:=0.1
+      -p max_turbo_speed:=0.3
+      -p max_steering_angle_deg:=33.0
+      -p wheelbase:=0.214
+      -p axis_linear:=1
+      -p axis_angular:=2
+      -p button_turbo:=7
+    profiles:
+      - jetacker
+      - jetacker-nav2

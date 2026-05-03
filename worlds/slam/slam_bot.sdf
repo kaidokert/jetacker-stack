@@ -1,0 +1,574 @@
+<?xml version="1.0" ?>
+<!-- SCALED TO 1/6 SIZE (scale=0.1667) for ~real robot dimensions -->
+<!--
+  Simple SLAM-ready world with differential drive robot and 2D lidar
+
+  Try sending commands via ROS2:
+    ros2 topic pub /slam_bot/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.3}}"
+
+  Listen to odometry:
+    ros2 topic echo /slam_bot/odometry
+
+  Listen to laser scan:
+    ros2 topic echo /slam_bot/scan
+-->
+<sdf version="1.8">
+  <world name="slam_world">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin
+      filename="gz-sim-imu-system"
+      name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0.000000 0.000000 1.666667 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.5 0.5 0.5 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Outer walls forming a room -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0.000000 1.666667 0.166667 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>3.333333 0.033333 0.333333</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>3.333333 0.033333 0.333333</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0.000000 -1.666667 0.166667 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>3.333333 0.033333 0.333333</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>3.333333 0.033333 0.333333</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>1.666667 0.000000 0.166667 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.033333 3.333333 0.333333</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.033333 3.333333 0.333333</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-1.666667 0.000000 0.166667 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.033333 3.333333 0.333333</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.033333 3.333333 0.333333</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Some obstacles for SLAM -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>0.500000 0.500000 0.083333 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.333333 0.333333 0.166667</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.333333 0.333333 0.166667</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.2 0.2 1</ambient>
+            <diffuse>0.8 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>-0.666667 -0.666667 0.125000 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <cylinder>
+              <radius>0.166667</radius>
+              <length>0.250000</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <cylinder>
+              <radius>0.166667</radius>
+              <length>0.250000</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.2 0.5 0.2 1</ambient>
+            <diffuse>0.3 0.8 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="obstacle_3">
+      <static>true</static>
+      <pose>0.833333 -0.833333 0.083333 0 0 0.7</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.250000 0.500000 0.166667</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.250000 0.500000 0.166667</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.5 1</ambient>
+            <diffuse>0.3 0.3 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- SLAM Robot with diff drive and lidar -->
+    <model name='slam_bot'>
+      <pose>0.000000 0.000000 0.054167 0 0 3.14159</pose>
+
+      <link name='chassis'>
+        <pose>-0.025238 0.000000 0.029167 0 0 0</pose>
+        <inertial>
+          <mass>3.0</mass>
+          <inertia>
+            <ixx>0.009</ixx>
+            <ixy>0.000000000</ixy>
+            <ixz>0.000000000</ixz>
+            <iyy>0.030</iyy>
+            <iyz>0.000000000</iyz>
+            <izz>0.035</izz>
+          </inertia>
+        </inertial>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.335237 0.166667 0.094788</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 1.0 1</ambient>
+            <diffuse>0.5 0.5 1.0 1</diffuse>
+            <specular>0.0 0.0 1.0 1</specular>
+          </material>
+        </visual>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.335237 0.166667 0.094788</size>
+            </box>
+          </geometry>
+        </collision>
+
+        <!-- 2D Lidar sensor on top of chassis -->
+        <sensor name='lidar' type='gpu_lidar'>
+          <pose>0.133333 0.000000 0.066667 0 0 0</pose>
+          <topic>/slam_bot/scan</topic>
+          <gz_frame_id>lidar_link</gz_frame_id>
+          <update_rate>10</update_rate>
+          <enable_metrics>false</enable_metrics>
+          <lidar>
+            <scan>
+              <horizontal>
+                <samples>180</samples>
+                <resolution>1</resolution>
+                <min_angle>-1.5708</min_angle>
+                <max_angle>1.5708</max_angle>
+              </horizontal>
+            </scan>
+            <range>
+              <min>0.12</min>
+              <max>30.0</max>
+              <resolution>0.01</resolution>
+            </range>
+            <noise>
+              <type>gaussian</type>
+              <mean>0.0</mean>
+              <stddev>0.01</stddev>
+            </noise>
+          </lidar>
+          <always_on>1</always_on>
+          <visualize>true</visualize>
+        </sensor>
+
+        <!-- IMU sensor at robot center -->
+        <sensor name='imu' type='imu'>
+          <pose>0.000000 0.000000 0.000000 0 0 0</pose>
+          <topic>/slam_bot/imu</topic>
+          <gz_frame_id>imu_link</gz_frame_id>
+          <update_rate>200</update_rate>
+          <enable_metrics>true</enable_metrics>
+          <always_on>1</always_on>
+          <visualize>true</visualize>
+          <imu>
+            <orientation_reference_frame>
+              <localization>CUSTOM</localization>
+              <custom_rpy>0 0 0</custom_rpy>
+              <grav_dir_x>0 0 -1</grav_dir_x>
+            </orientation_reference_frame>
+            <angular_velocity>
+              <x>
+                <noise type="gaussian">
+                  <mean>0.0</mean>
+                  <stddev>2e-4</stddev>
+                  <bias_mean>0.0000075</bias_mean>
+                  <bias_stddev>0.0000008</bias_stddev>
+                </noise>
+              </x>
+              <y>
+                <noise type="gaussian">
+                  <mean>0.0</mean>
+                  <stddev>2e-4</stddev>
+                  <bias_mean>0.0000075</bias_mean>
+                  <bias_stddev>0.0000008</bias_stddev>
+                </noise>
+              </y>
+              <z>
+                <noise type="gaussian">
+                  <mean>0.0</mean>
+                  <stddev>2e-4</stddev>
+                  <bias_mean>0.0000075</bias_mean>
+                  <bias_stddev>0.0000008</bias_stddev>
+                </noise>
+              </z>
+            </angular_velocity>
+            <linear_acceleration>
+              <x>
+                <noise type="none"/>
+              </x>
+              <y>
+                <noise type="none"/>
+              </y>
+              <z>
+                <noise type="none"/>
+              </z>
+            </linear_acceleration>
+          </imu>
+        </sensor>
+      </link>
+
+      <link name='left_wheel'>
+        <pose>0.092380 0.104171 -0.004167 -1.5707 0 0</pose>
+        <inertial>
+          <mass>0.1</mass>
+          <inertia>
+            <ixx>0.0001</ixx>
+            <ixy>0.000000000</ixy>
+            <ixz>0.000000000</ixz>
+            <iyy>0.0001</iyy>
+            <iyz>0.000000000</iyz>
+            <izz>0.0001</izz>
+          </inertia>
+        </inertial>
+        <visual name='visual'>
+          <geometry>
+            <sphere>
+              <radius>0.050000</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+            <specular>0.2 0.2 0.2 1</specular>
+          </material>
+        </visual>
+        <collision name='collision'>
+          <geometry>
+            <sphere>
+              <radius>0.050000</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+                <slip1>0.035</slip1>
+                <slip2>0</slip2>
+                <fdir1>0 0 1</fdir1>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+
+      <link name='right_wheel'>
+        <pose>0.092380 -0.104171 -0.004167 -1.5707 0 0</pose>
+        <inertial>
+          <mass>0.1</mass>
+          <inertia>
+            <ixx>0.0001</ixx>
+            <ixy>0.000000000</ixy>
+            <ixz>0.000000000</ixz>
+            <iyy>0.0001</iyy>
+            <iyz>0.000000000</iyz>
+            <izz>0.0001</izz>
+          </inertia>
+        </inertial>
+        <visual name='visual'>
+          <geometry>
+            <sphere>
+              <radius>0.050000</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+            <specular>0.2 0.2 0.2 1</specular>
+          </material>
+        </visual>
+        <collision name='collision'>
+          <geometry>
+            <sphere>
+              <radius>0.050000</radius>
+            </sphere>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1</mu>
+                <mu2>1</mu2>
+                <slip1>0.035</slip1>
+                <slip2>0</slip2>
+                <fdir1>0 0 1</fdir1>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+      </link>
+
+      <link name='caster'>
+        <pose>-0.159523 0.000000 -0.020833 0 0 0</pose>
+        <inertial>
+          <mass>0.1</mass>
+          <inertia>
+            <ixx>0.0001</ixx>
+            <ixy>0.000000000</ixy>
+            <ixz>0.000000000</ixz>
+            <iyy>0.0001</iyy>
+            <iyz>0.000000000</iyz>
+            <izz>0.0001</izz>
+          </inertia>
+        </inertial>
+        <visual name='visual'>
+          <geometry>
+            <sphere>
+              <radius>0.033333</radius>
+            </sphere>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+            <specular>0.2 0.2 0.2 1</specular>
+          </material>
+        </visual>
+        <collision name='collision'>
+          <geometry>
+            <sphere>
+              <radius>0.033333</radius>
+            </sphere>
+          </geometry>
+        </collision>
+      </link>
+
+      <joint name='left_wheel_joint' type='revolute'>
+        <parent>chassis</parent>
+        <child>left_wheel</child>
+        <axis>
+          0.000000 0.000000 0.166667
+          <limit>
+            <lower>-1.79769e+308</lower>
+            <upper>1.79769e+308</upper>
+            <effort>0.09</effort>
+            <velocity>20.0</velocity>
+          </limit>
+        </axis>
+      </joint>
+
+      <joint name='right_wheel_joint' type='revolute'>
+        <parent>chassis</parent>
+        <child>right_wheel</child>
+        <axis>
+          0.000000 0.000000 0.166667
+          <limit>
+            <lower>-1.79769e+308</lower>
+            <upper>1.79769e+308</upper>
+            <effort>0.09</effort>
+            <velocity>20.0</velocity>
+          </limit>
+        </axis>
+      </joint>
+
+      <joint name='caster_wheel' type='ball'>
+        <parent>chassis</parent>
+        <child>caster</child>
+      </joint>
+
+      <!-- ros2_control plugin for realistic odometry -->
+      <plugin
+        filename="gz_ros2_control-system"
+        name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>/workspace/config/common/ros2_control.yaml</parameters>
+        <robot_param_node>robot_state_publisher</robot_param_node>
+        <robot_description>robot_description</robot_description>
+        <ros>
+          <parameter name="use_sim_time" type="bool">true</parameter>
+        </ros>
+      </plugin>
+
+      <!-- Pose publisher for ground truth -->
+      <plugin
+        filename="gz-sim-pose-publisher-system"
+        name="gz::sim::systems::PosePublisher">
+        <publish_link_pose>false</publish_link_pose>
+        <publish_collision_pose>false</publish_collision_pose>
+        <publish_visual_pose>false</publish_visual_pose>
+        <publish_nested_model_pose>false</publish_nested_model_pose>
+        <publish_model_pose>true</publish_model_pose>
+        <update_frequency>50</update_frequency>
+      </plugin>
+
+    </model>
+
+  </world>
+</sdf>
