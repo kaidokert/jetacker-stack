@@ -1,0 +1,38 @@
+# Health Check Configuration for Test Drive Node - Jetacker Robot
+# Defines required topics, transforms, and minimum sample rates
+# All checks must pass before test execution begins
+
+health_checks:
+  # Timeout for health check completion (seconds)
+  timeout: 10.0
+
+  # Sample duration for rate checks (seconds)
+  sample_duration: 1.0
+
+  # Required topics with minimum rates
+  topics:
+    # Tricycle controller odometry
+    - topic: /tricycle_steering_controller/odometry
+      message_type: nav_msgs/msg/Odometry
+      min_rate_hz: 10.0
+      required_fields:
+        - pose.pose.position.x
+        - pose.pose.position.y
+        - twist.twist.linear.x
+      description: "Tricycle controller odometry"
+
+    # Joint states - wheel position and velocity
+    - topic: /joint_states
+      message_type: sensor_msgs/msg/JointState
+      min_rate_hz: 10.0
+      required_fields:
+        - position
+        - velocity
+      description: "Joint states from gz_ros2_control"
+
+  # Required TF transforms
+  transforms:
+    - parent_frame: odom
+      child_frame: base_link
+      max_age_sec: 0.5
+      description: "Odometry to base_link (published by tricycle controller)"

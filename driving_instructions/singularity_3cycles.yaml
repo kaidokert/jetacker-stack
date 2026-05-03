@@ -1,0 +1,80 @@
+# Ackermann singularity isolation test — 3 cycles
+#
+# Pattern per cycle:
+#   Phase A: vx=+0.1, wz=+0.217  (forward left turn at r=0.46m) for 2s
+#   Phase B: vx=0,    wz=0       (stop — singularity zone)       for 0.5s
+#   Phase C: vx=-0.1, wz=+0.217  (reverse, same wz)              for 2s
+#   Phase D: vx=0,    wz=0       (stop)                           for 0.5s
+#
+# wz = vx / min_turning_radius = 0.1 / 0.46 = 0.217 rad/s
+# Expected steering angle: atan(wheelbase * wz / vx) = atan(0.213 * 0.217 / 0.1)
+#   = 0.43 rad = 24.8 deg  (vs 28 deg max)
+#
+# Usage:
+#   python drive_simple.py --instruction singularity_3cycles --no-reset --cycles 1
+#   python drive_singularity_test.py --cycles 3
+#   python drive_singularity_test.py --cycles 3 --guard-off
+
+instructions:
+  # === Cycle 1 ===
+  - type: cmd_vel
+    vx: 0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C1 Phase A: forward left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C1 Phase B: stop (singularity zone)"
+
+  - type: cmd_vel
+    vx: -0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C1 Phase C: reverse left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C1 Phase D: stop"
+
+  # === Cycle 2 ===
+  - type: cmd_vel
+    vx: 0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C2 Phase A: forward left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C2 Phase B: stop (singularity zone)"
+
+  - type: cmd_vel
+    vx: -0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C2 Phase C: reverse left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C2 Phase D: stop"
+
+  # === Cycle 3 ===
+  - type: cmd_vel
+    vx: 0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C3 Phase A: forward left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C3 Phase B: stop (singularity zone)"
+
+  - type: cmd_vel
+    vx: -0.1
+    wz: 0.217
+    seconds: 2.0
+    description: "C3 Phase C: reverse left turn"
+
+  - type: pause
+    seconds: 0.5
+    description: "C3 Phase D: stop"

@@ -1,0 +1,12 @@
+waypoints:
+- name: "Matrix 4: 90\xC2\xB0 right arc forward"
+  x: 1.0
+  y: -1.0
+  heading_deg: -90.0
+  tolerance_xy: 0.20
+  tolerance_yaw: 0.30
+  timeout: 45.0  # Nominal ~10-25s, 45s allows slow-but-valid configs
+  qx: 0.0
+  qy: 0.0
+  qz: -0.7071067811865476
+  qw: 0.7071067811865476

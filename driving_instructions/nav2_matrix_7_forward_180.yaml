@@ -1,0 +1,12 @@
+waypoints:
+- name: "Matrix 7: 180\xC2\xB0 semicircle to face opposite direction"
+  x: 0.1
+  y: -1.2
+  heading_deg: 180.0
+  tolerance_xy: 0.30
+  tolerance_yaw: 0.35
+  timeout: 60.0  # Hard maneuver, mostly fails — needs room but 120s was wasteful
+  qx: 0.0
+  qy: 0.0
+  qz: 1.0
+  qw: 6.123233995736766e-17

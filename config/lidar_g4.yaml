@@ -1,0 +1,21 @@
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/ttyUSB0
+    frame_id: lidar_frame
+    ignore_array: ""
+    baudrate: 230400
+    lidar_type: 1
+    device_type: 0
+    isSingleChannel: false
+    intensity: false
+    sample_rate: 9
+    fixed_resolution: true   # Re-enabled to fix variable point count warnings in slam_toolbox
+    reversion: false
+    inverted: true          # Changed from false - mirrors left/right
+    auto_reconnect: true
+    angle_max: 180.0
+    angle_min: -180.0
+    range_max: 64.0
+    range_min: 0.01
+    frequency: 5.0         # Back to 10Hz (slam expects 929 points at this rate)
+    invalid_range_is_inf: false

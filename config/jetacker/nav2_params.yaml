@@ -1,0 +1,495 @@
+---
+# Nav2 Parameters for Jetacker Robot
+# Tricycle/Ackermann drive robot with lidar sensor
+# Robot dimensions: ~0.30m x 0.20m, wheelbase: 0.213m, turning radius: 0.46m
+# Adapted from slam_bot config for SmacPlannerHybrid with ACKERMANN motion model
+#
+# NOTE: use_sim_time is set via USE_SIM_TIME env var in docker-compose,
+# passed as -p use_sim_time:=${USE_SIM_TIME} on the command line.
+# Do NOT add use_sim_time to this file.
+
+amcl:
+  ros__parameters:
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: "base_link"
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: false
+    global_frame_id: "map"
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 1.0  # Stricter matching (reduced from 2.0)
+    laser_max_range: 100.0
+    laser_min_range: 0.1  # Avoid localizing against chassis/sensor housing
+    laser_model_type: "likelihood_field"
+    max_beams: 60
+    max_particles: 5000  # Increased for better particle diversity
+    min_particles: 1000  # Higher minimum to prevent premature convergence
+    odom_frame_id: "odom"
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: "nav2_amcl::OmniMotionModel"  # Omni model better for Ackermann (constraints in controller)
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    update_min_a: 0.1  # Update every 5.7° instead of 11.4° (more frequent corrections)
+    update_min_d: 0.10  # Update every 10cm instead of 25cm (more frequent corrections)
+    z_hit: 0.8  # Trust laser hits more (increased from 0.5)
+    z_max: 0.05
+    z_rand: 0.2  # Trust random noise less (decreased from 0.5)
+    z_short: 0.05
+    scan_topic: /scan  # Jetacker scan topic (no robot prefix)
+    map_topic: /map
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+
+bt_navigator:
+  ros__parameters:
+    ros__log_level: DEBUG  # Enable detailed behavior tree logging
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom  # EKF-fused odometry (remapped from /odometry/filtered at EKF node)
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    navigators: ['navigate_to_pose']
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    # Replan only when the global path becomes invalid (e.g. obstacle intersects it)
+    # at 1Hz check rate. No periodic replans, no recovery server.
+    default_nav_to_pose_bt_xml: "/opt/ros/jazzy/share/nav2_bt_navigator/behavior_trees/navigate_w_replanning_only_if_path_becomes_invalid.xml"
+
+controller_server:
+  ros__parameters:
+    ros__log_level: DEBUG  # Enable detailed MPPI logging
+    verbose: true  # Enable MPPI trajectory scoring logs
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001  # Ackermann has no lateral motion
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    # Progress checker parameters
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.02  # Relaxed from 0.5 - robot moving slowly
+      movement_time_allowance: 5.0  # Increased from 10.0 - give more time
+
+    # Goal checker parameters — StoppedGoalChecker requires robot to be
+    # at rest within tolerance before reporting success (real accuracy signal)
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::StoppedGoalChecker"
+      xy_goal_tolerance: 0.25  # Nav2 default — overridden at runtime from waypoint YAML
+      yaw_goal_tolerance: 0.25  # Nav2 default — overridden at runtime from waypoint YAML
+      rot_stopped_velocity: 0.25   # rad/s — robot angular velocity must be below this
+      trans_stopped_velocity: 0.25  # m/s — robot linear velocity must be below this
+
+    ### MPPI Controller
+    # Model Predictive Path Integral controller for Ackermann/tricycle drive
+    # Ref: github.com/ros-navigation/navigation2/blob/jazzy/nav2_mppi_controller/README.md
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+
+      ## Path Handler — cusp segmentation for Reeds-Shepp S-curves
+      enforce_path_inversion: true   # Crop path at cusp, reveal next segment only when robot arrives
+      inversion_xy_tolerance: 0.15   # m — v18b study locked value
+      inversion_yaw_tolerance: 0.35  # rad — v18b study locked value
+      min_inversion_horizon: 0.801   # m — ghost extension activates when TGP shorter than this. v18b trial 98
+      ghost_max_extension: 0.70     # m — max length of synthetic ghost path appended
+      ghost_point_spacing: 0.05    # m — spacing between ghost points (>= costmap resolution)
+      ghost_min_seed_points: 4      # target seed points for approach-phase heading (auto-adapts down to 2 for micro-segments)
+      micro_cusp_length_threshold: 0.15  # m — segments shorter than xy tolerance get relaxed yaw
+      micro_cusp_yaw_scale: 2.0          # yaw tolerance multiplier for micro-cusps (0.35 * 2.0 = 0.70 rad)
+
+      ## Controller Selection
+      motion_model: "Ackermann"  # string, default: "DiffDrive". Options: DiffDrive, Omni, Ackermann
+
+      ## General Parameters
+      time_steps: 41            # int, default: 56. v18b trial 98
+      model_dt: 0.05            # double, default: 0.05. Time interval (s) between trajectory points
+      batch_size: 1000          # int, default: 1000. Locked: m7_v16b study
+      iteration_count: 3        # int, default: 1. MPPI iterations per control cycle. Tuned: v12 t180
+      temperature: 0.236        # double, default: 0.3. v18b trial 98
+      gamma: 0.012              # double, default: 0.015. Smoothness vs low-energy trade-off. v12 t180
+      retry_attempt_limit: 1    # int, default: 1. Attempts to find feasible trajectory before reporting failure
+      regenerate_noises: false  # bool, default: false. Regenerate noises each iteration or use precomputed
+      reset_period: 1.0         # double. Period (s) to reset noise generator when stuck
+      visualize: true           # bool, default: false. Publish trajectory visualization topics
+      verbose: true             # bool. Enable detailed trajectory scoring logs
+
+      ## Velocity Limits
+      vx_max: 0.5              # double, default: 0.5. Max forward speed (m/s)
+      vx_min: -0.3             # double, default: -0.35. Max reverse speed (m/s), negative = backward
+      vy_max: 0.0              # double, default: 0.5. Max lateral speed (m/s). Zero for Ackermann
+      wz_max: 1.9              # double, default: 1.9. Max angular velocity (rad/s). This is turning SPEED, not steering angle
+
+      ## Acceleration Limits
+      ax_max: 5.0              # double, default: 3.0. Max forward acceleration (m/s^2)
+      ax_min: -5.0             # double, default: -3.0. Max braking deceleration (m/s^2)
+      ay_max: 0.0              # double, default: 3.0. Max lateral acceleration (m/s^2). Zero for Ackermann
+      ay_min: 0.0              # double, default: -3.0. Max lateral deceleration (m/s^2). Zero for Ackermann
+      az_max: 3.5              # double, default: 3.5. Max angular acceleration (rad/s^2)
+
+      ## Sampling Noise (std dev for Monte Carlo trajectory generation)
+      vx_std: 0.025             # double, default: 0.2. Locked: m7_v16b study
+      vy_std: 0.0              # double, default: 0.2. Lateral velocity sampling spread (m/s). Zero for Ackermann
+      wz_std: 0.146             # double, default: 0.4. v18b trial 98
+
+      ## Path Handler
+      prune_distance: 1.7       # double, default: 1.5. Distance ahead of nearest point to prune path to (m)
+      transform_tolerance: 0.2  # double, default: 0.1. TF data transformation tolerance (s). Raised for startup delays
+      # max_robot_pose_search_dist:  # double, default: costmap half-size. Max distance to search for nearest path point
+      # enforce_path_inversion: false  # bool, default: false. Force direction changes at planner inversion points
+      # inversion_xy_tolerance: 0.2   # double, default: 0.2. Cartesian proximity (m) to inversion point
+      # inversion_yaw_tolerance: 0.4  # double, default: 0.4. Angular proximity (rad) to inversion point
+
+      ## Trajectory Visualizer (only used when visualize: true)
+      TrajectoryVisualizer:
+        trajectory_step: 5      # int, default: 5. Step between trajectories to visualize (downsample)
+        time_step: 3            # int, default: 3. Step between points on each trajectory
+
+      ## Ackermann Motion Model Constraints
+      # Applied ONLY to final control output, not to sampled trajectories.
+      # Clips wz when |vx/wz| < min_turning_r (i.e. turning radius too tight)
+      AckermannConstraints:
+        min_turning_r: 0.325    # double. Minimum turning radius (m). v18b trial 98
+
+      ## Critics (trajectory scoring plugins)
+      # PFC-only — confirmed sufficient to drive to goal with StoppedGoalChecker (v12 t180).
+      # GoalCritic/PAC/CostCritic disabled.
+      publish_critics_stats: true
+      critics: [
+        "PathFollowCritic",
+        "PathAlignCritic",
+        "ObstaclesCritic"
+      ]
+
+      ## CostCritic - Penalizes trajectories through high-cost costmap areas
+      CostCritic:
+        enabled: true
+        consider_footprint: false
+        cost_weight: 6.98
+        cost_power: 1
+        collision_cost: 1000000.0
+        critical_cost: 300.0
+        near_goal_distance: 0.01
+        trajectory_point_step: 2
+
+      ## PathAlignCritic - Keeps trajectory laterally aligned with global path
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.1       # v18b trial 98
+        threshold_to_consider: 0.01  # Keep critic active all the way to goal
+        offset_from_furthest: 3   # Locked: m7_v16b study
+        trajectory_point_step: 4
+        max_path_occupancy_ratio: 0.1
+        use_path_orientations: true  # Also matches heading to path
+
+      ## PathFollowCritic - Drives robot to follow the furthest reachable path point
+      PathFollowCritic:
+        enabled: true
+        cost_weight: 52.8       # v18b trial 98
+        cost_power: 1
+        offset_from_furthest: 5
+        threshold_to_consider: 0.01  # Keep critic active all the way to goal
+
+      ## GoalCritic - Pulls trajectories toward goal when close
+      GoalCritic:
+        enabled: true
+        cost_weight: 100.0
+        cost_power: 1
+        threshold_to_consider: 0.7
+
+      ## --- DISABLED CRITICS (kept for reference) ---
+      # ConstraintCritic: { cost_weight: 4.0 }
+      # GoalAngleCritic: { cost_weight: 3.28, threshold_to_consider: 0.3 }
+      # PathAngleCritic: { cost_weight: 10.0, threshold_to_consider: 0.3, mode: 2 }
+      # PreferForwardCritic: { cost_weight: 7.31, threshold_to_consider: 0.2 }
+      # VelocityDeadbandCritic: REJECTED — no distance gate, fights StoppedGoalChecker (16s creep stall on M3)
+
+      ## ObstaclesCritic - Distance-based obstacle repulsion with batch-relative normalization
+      ObstaclesCritic:
+        enabled: true
+        cost_power: 1
+        consider_footprint: false
+        repulsion_weight: 10.0      # Soft — let MPPI mostly follow PFC, intervene only on real obstacles
+        critical_weight: 150.0      # Soft — reduce interference with clean drives near static walls
+        collision_cost: 1000000.0   # 10x default
+        collision_margin_distance: 0.15  # m — narrow critical band so static walls aren't "near collision"
+        near_goal_distance: 0.5     # m — skip repulsion near goal
+      # TwirlingCritic: (omnidirectional only)
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 10.0  # Increased from 5.0 - clear old obstacles faster as robot moves
+      publish_frequency: 5.0  # Increased from 2.0 for better visualization
+      global_frame: map  # FOOTPRINT FIX: Use AMCL-corrected position (was 'odom', had 34cm drift)
+      robot_base_frame: base_link
+      transform_tolerance: 1.0  # Increased from default 0.2 - tolerate TF delays during startup
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.05
+      robot_radius: 0.11  # Jetacker: actual diagonal ~17cm, using 13cm for tighter fit
+      lethal_cost_threshold: 253
+      plugins: ["obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Paranoid = 1.0-2.0 , Normal = 3-5, aggressive 8-10
+        cost_scaling_factor: 8.0  # Steeper cost dropoff for tighter navigation
+        inflation_radius: 0.15  # Must be >= circumscribed_radius (0.144) or MPPI can't evaluate costs
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        # 2D obstacle layer — no z-height mismatch between lidar (z=0.134) and TOF (z=0.08)
+        # VoxelLayer caused TOF clearing to fail: TOF rays cleared z-voxel 1 but lidar
+        # marked z-voxel 2, so columns stayed marked despite TOF seeing clear space
+        observation_sources: scan tof_rear_left tof_rear_right
+        scan:
+          topic: /scan  # Jetacker front lidar
+          sensor_frame: lidar_link
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+        tof_rear_left:
+          topic: /tof_rear_left
+          sensor_frame: tof_rear_left_link
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 0.7
+          raytrace_min_range: 0.0
+          obstacle_max_range: 0.7
+          obstacle_min_range: 0.05
+        tof_rear_right:
+          topic: /tof_rear_right
+          sensor_frame: tof_rear_right_link
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 0.7
+          raytrace_min_range: 0.0
+          obstacle_max_range: 0.7
+          obstacle_min_range: 0.05
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      always_send_full_costmap: True
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_link
+      robot_radius: 0.13  # Jetacker: actual diagonal ~17cm, using 13cm for tighter fit
+      resolution: 0.05
+      # track_unknown_space: false
+      # unknown_cost_value: 1
+      trinary_costmap: false
+      # Re-enabled obstacle_layer so dynamic obstacles invalidate the global path,
+      # triggering on-demand replan via navigate_w_replanning_only_if_path_becomes_invalid.xml BT
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 0.3  # Normal cost dropoff for global planning
+        inflation_radius: 0.22  # Must be >= circumscribed_radius (0.144) or planner can't evaluate costs
+      always_send_full_costmap: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    ros__log_level: DEBUG  # Enable detailed planner logging
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      # workdir\ref\ros-jazzy-nav2-smac-planner-1.3.10\src\smac_planner_hybrid.cpp
+      downsample_costmap: false
+      downsampling_factor: 1
+
+      # workdir\ref\ros-jazzy-nav2-smac-planner-1.3.10\include\nav2_smac_planner\smac_planner_hybrid.hpp
+      angle_quantization_bins: 180
+
+      # # tolerance for planning if unable to reach exact pose, in meters
+      tolerance: 0.01
+      allow_unknown: true
+      max_iterations: 1000000
+      # max_on_approach_iterations: 1000000
+      # terminal_checkint_interval
+      smooth_path: true
+
+      # Tuned higher to make global paths easier to follow by MPPI
+      minimum_turning_radius: 2.0
+      # allow_primitive_interpolation
+      cache_obstacle_heuristic: True
+      reverse_penalty: 3.5
+      # Consider boosting this if paths are too twitchy
+      change_penalty: 10.0
+      # Consider increasing this to 1.5 or 2.0 if oscillation occurs
+      non_straight_penalty: 1.01
+      # Higher: takes a wider berth around obstacles
+      cost_penalty: 100.0  #
+      use_quadratic_cost_penalty: true
+      retrospective_penalty: 0.015
+      analytic_expansion_ratio: 2.0
+      analytic_expansion_max_cost: 50.0
+      # analytic_expansion_max_cost_override
+      # use_quadratic_cost_penalty
+      # downsample_obstacle_heuristic
+
+      analytic_expansion_max_length: 3.0
+      # Maybe Tune. If your robot does weird snaps/turns right at the very end of the path,
+      # reduce analytic_expansion_max_length to 1.5.
+      lookup_table_size: 10.0  # OPT-5: Reduced from 20.0 to speed up single-threaded lookup table generation
+
+      debug_visualizations: true
+
+      motion_model_for_search: "REEDS_SHEPP"  # For Ackermann drive (supports reverse)
+
+      # Cost multiplier to apply to search to steer away from high cost areas. Larger values will place in the center of aisles more exactly
+      # cost_travel_multiplier: 2.5 # this doesnt seem to be a valid param for smacplannerhybdir
+
+      max_planning_time: 5.0
+
+smoother_server:
+  ros__parameters:
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["backup", "drive_on_heading", "wait"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
+
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.3, 0.0, 0.8]  # Conservative: [x, y, theta] (slam_bot: [0.5, 0.0, 1.5])
+    min_velocity: [-0.2, 0.0, -0.8]  # Allow reverse at 0.2 m/s (rear sensors enabled)
+    max_accel: [1.0, 0.0, 2.0]  # OPTIMAL: Tested 1.5 (74mm P2P) and 3.0 (158mm P2P), 2.0 is sweet spot (23mm P2P)
+    max_decel: [-1.5, 0.0, -2.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+collision_monitor:
+  ros__parameters:
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: True
+    stop_pub_timeout: 2.0
+    polygons: ["FootprintApproach"]
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/local_costmap/published_footprint"
+      time_before_collision: 1.2
+      simulation_time_step: 0.1
+      min_points: 6
+      visualize: False
+      enabled: True
+    observation_sources: ["scan", "tof_rear_left", "tof_rear_right"]
+    scan:
+      type: "scan"
+      topic: "/scan"  # Jetacker front lidar
+      min_height: 0.05
+      max_height: 2.0
+      enabled: True
+    tof_rear_left:
+      type: "scan"
+      topic: "/tof_rear_left"
+      min_height: 0.05
+      max_height: 2.0
+      enabled: True
+    tof_rear_right:
+      type: "scan"
+      topic: "/tof_rear_right"
+      min_height: 0.05
+      max_height: 2.0
+      enabled: True
+
+lifecycle_manager:
+  ros__parameters:
+    autostart: true
+    # Increase bond timeout to handle TF timing issues during controller activation
+    # Default is ~4s, but controller needs time for AMCL TF buffer to populate
+    bond_timeout: 10.0

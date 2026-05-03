@@ -1,0 +1,17 @@
+# Bridge configuration for SceneBroadcaster comparison test
+# This bridges the unified pose topic from SceneBroadcaster
+
+# SceneBroadcaster unified pose topic (ALL models)
+# This will be filtered by scene_pose_filter.py node
+- ros_topic_name: "/world/slam_world/pose/info"
+  gz_topic_name: "/world/slam_world/pose/info"
+  ros_type_name: "gz_msgs/msg/PoseV"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
+# Clock for simulation time
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS

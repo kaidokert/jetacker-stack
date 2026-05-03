@@ -1,0 +1,16 @@
+# Matrix Test 1: Forward Straight 1.0m
+# Validate: Basic forward drive without turning
+
+kP: 1.5
+min_velocity: 0.05
+
+instructions:
+  - type: distance
+    meters: 1.0
+    speed: 0.2
+    timeout: 15.0
+    description: "Forward 1.0m at moderate speed"
+
+  - type: pause
+    seconds: 2.0
+    description: "Settle before measurement"

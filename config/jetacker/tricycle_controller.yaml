@@ -1,0 +1,70 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 10  # Hz (reduced from 50Hz for Gazebo stability)
+
+    # Diagnostic thresholds for hardware component execution time.
+    # JointStateTopicSystem writes via DDS publish, which has occasional
+    # scheduling spikes (~5ms). Default thresholds trigger WARN on every
+    # cycle. Raise to suppress false alarms.
+    diagnostics:
+      threshold:
+        hardware_components:
+          execution_time:
+            mean_error:
+              warn: 5000.0   # us (default too low for topic-based HW interface)
+              error: 10000.0
+            standard_deviation:
+              warn: 1000.0
+              error: 5000.0
+
+    # Hardware interface
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    # Tricycle steering controller
+    tricycle_steering_controller:
+      type: tricycle_steering_controller/TricycleSteeringController
+
+tricycle_steering_controller:
+  ros__parameters:
+    steering_joints_names: ["front_steering_joint"]
+    traction_joints_names: ["rear_right_wheel_joint", "rear_left_wheel_joint"]
+
+    # Control mode
+    open_loop: false  # Use closed-loop control for better odometry
+    position_feedback: false
+
+    # Physical parameters (matching jetacker model)
+    wheelbase: 0.213  # meters (distance from rear axle to front steering pivot)
+    traction_track_width: 0.182  # meters (distance between rear wheels)
+    traction_wheels_radius: 0.050  # meters (5cm wheel radius)
+
+    # Command timeout
+    command_timeout: 0.5  # seconds
+
+    # Reference frame
+    reference_frame: "base_link"
+
+    # Odometry configuration - TF published by EKF (fuses wheel odom + IMU)
+    enable_odom_tf: false
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topic for cmd_vel input
+    reference_topic: "~/reference"
+
+    # Steering speed control
+    reduce_wheel_speed_until_steering_reached: false
+
+joint_state_broadcaster:
+  ros__parameters:
+    joints:
+      - front_steering_joint
+      - rear_left_wheel_joint
+      - rear_right_wheel_joint
+      - turret_joint
+    # Publish to separate topic for merging
+    state_publish_rate: 10.0  # Reduced from 50Hz for Gazebo stability
+    interfaces:
+      - position
+      - velocity

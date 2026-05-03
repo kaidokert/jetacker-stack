@@ -1,0 +1,13 @@
+instructions:
+  - type: rotation
+    degrees: -180
+    speed: 0.1
+    description: "Turn 180 degrees counter-clockwise forward arc"
+  - type: pause
+    seconds: 2.0
+  - type: rotation
+    degrees: 180
+    speed: -0.1
+    description: "Turn 180 degrees clockwise reverse arc (return to start)"
+  - type: pause
+    seconds: 2.0

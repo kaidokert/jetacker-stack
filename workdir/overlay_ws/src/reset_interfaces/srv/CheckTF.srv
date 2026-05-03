@@ -1,0 +1,9 @@
+# Request: Check if TF transform exists and is fresh
+string parent_frame    # Parent frame (e.g., 'odom', 'map')
+string child_frame     # Child frame (e.g., 'base_link', 'odom')
+float64 timeout        # Maximum wait time in seconds
+---
+# Response: Result of TF check
+bool success           # True if transform available and fresh
+string message         # Human-readable result message
+float64 duration       # Time taken to complete check (seconds)

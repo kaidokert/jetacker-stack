@@ -1,0 +1,195 @@
+# Hand tuned SLAM-mode driving loop that goes around the gym
+
+kP: 0.3
+min_velocity: 0.2
+enable_rosbag: true
+enable_instrumentation: false
+
+instructions:
+  # Initial pause to let SLAM initialize
+  - type: pause
+    seconds: 2.0
+    description: "SLAM initialization"
+
+  # ========================================================================
+  # Leg 1: Drive south from center toward bottom perimeter
+  # ========================================================================
+  - type: distance
+    meters: 0.6
+    speed: 0.3
+    timeout: 5.0
+    description: "Leg 1: South from center"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 1: LEFT 90° to face east
+  - type: rotation
+    degrees: 90.0             # LEFT turn
+    speed: 3.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 1: LEFT to east"
+
+  - type: pause
+    seconds: 0.5
+    description: "Post-turn pause"
+
+  # ========================================================================
+  # Leg 2: Drive east across bottom (short leg to corner)
+  # ========================================================================
+  - type: distance
+    meters: 0.3
+    speed: 0.5
+    timeout: 5.0
+    description: "Leg 2: East across bottom"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 2: LEFT 90° to face north (bottom-right corner)
+  - type: rotation
+    degrees: 90.0
+    speed: 2.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 2: LEFT to north"
+
+  # Final pause
+  - type: pause
+    seconds: 2.0
+    description: "Final pause"
+
+  # ========================================================================
+  # Leg 3: Drive north up right side
+  # ========================================================================
+  - type: distance
+    meters: 1.3
+    speed: 0.3
+    timeout: 5.0
+    description: "Leg 3: North up right side"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 3: LEFT 90° to face west (top-right corner)
+  - type: rotation
+    degrees: 90.0
+    speed: 3.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 3: LEFT to west"
+
+  - type: pause
+    seconds: 0.5
+    description: "Post-turn pause"
+
+  # ========================================================================
+  # Leg 4: Drive west across top
+  # ========================================================================
+  - type: distance
+    meters: 1.6
+    speed: 0.3
+    timeout: 5.0
+    description: "Leg 4: West across top"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 4: LEFT 90° to face south (top-left corner)
+  - type: rotation
+    degrees: 90.0
+    speed: 3.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 4: LEFT to south"
+
+  - type: pause
+    seconds: 0.5
+    description: "Post-turn pause"
+
+  # ========================================================================
+  # Leg 5: Drive south down left side
+  # ========================================================================
+  - type: distance
+    meters: 1.2
+    speed: 0.3
+    timeout: 5.0
+    description: "Leg 5: South down left side"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 5: LEFT 90° to face east (bottom-left corner)
+  - type: rotation
+    degrees: 90.0
+    speed: 3.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 5: LEFT to east"
+
+  - type: pause
+    seconds: 0.5
+    description: "Post-turn pause"
+
+  # ========================================================================
+  # Leg 6: Drive east toward center (short leg)
+  # ========================================================================
+  - type: distance
+    meters: 0.1
+    speed: 0.1
+    timeout: 5.0
+    description: "Leg 6: East toward center"
+
+  - type: pause
+    seconds: 0.5
+    description: "Pre-turn pause"
+
+  # Turn 6: LEFT 90° to face north (prepare for center approach)
+  - type: rotation
+    degrees: 90.0
+    speed: 3.0
+    forward_velocity: 0.28
+    kP_linear: 0.35
+    min_linear_velocity: 0.08
+    timeout: 5.0
+    description: "Turn 6: LEFT to north"
+
+  - type: pause
+    seconds: 0.5
+    description: "Post-turn pause"
+
+  # ========================================================================
+  # Leg 7: Drive north to return to center
+  # ========================================================================
+  - type: distance
+    meters: 0.4
+    speed: 0.3
+    timeout: 5.0
+    description: "Leg 7: North to center"
+
+  # Final pause for SLAM to finish processing
+  - type: pause
+    seconds: 2.0
+    description: "Final SLAM processing"
+
+  # Save the map as .pgm for quality analysis
+  - type: save_map
+    map_name: "gym_loop_map"
+    timeout: 10.0
+    description: "Save SLAM map after full loop"

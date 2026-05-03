@@ -1,0 +1,416 @@
+# stacks.yaml — Single source of truth for stack topology
+#
+# Describes every service, its metadata, dependencies, and how stacks compose.
+# Read by: stack.py (orchestration), reset_orchestrator (sequencing), doc generator.
+# Does NOT replace docker-compose.yml (container config stays there).
+#
+# Naming convention: compose service = "{robot}-{component}" by default.
+# Design rationale: docs/architecture/STACKS_YAML_DESIGN.md
+
+version: 1
+
+config:
+  naming: "{robot}-{component}"
+  defaults:
+    kind: node
+    modes: [sim, hw]
+    gates: []
+    timeout: 30
+    critical: true
+
+# =============================================================================
+# Components
+# =============================================================================
+# Each key is the canonical component name. Becomes the suffix in compose
+# service names (e.g. component "gazebo" → service "jetacker-gazebo").
+#
+# Fields inherit from config.defaults above — only specify overrides.
+#
+# Run semantics (exactly one of these, determines how the component is launched):
+#   ros:      "package/executable"      → ros2 run package executable
+#   launch:   "package/file.launch.py"  → ros2 launch package file.launch.py
+#   script:   "ros/my_node.py"          → python3 /workspace/ros/my_node.py
+#   (none)                              → infrastructure, no ROS2 command
+#
+# Other fields:
+#   node:             ROS2 node name (default: same as component name)
+#   compose_profile:  Docker compose profile/image group (gazebo, overlay, nav2)
+#   after:            [components this must start after]
+#   excludes:         [components that are mutually exclusive with this one]
+
+components:
+
+  # ── Simulation Infrastructure ──────────────────────────────────────────────
+
+  gazebo:                              # Headless Gazebo physics server (world varies per robot)
+    kind: infra
+    modes: [sim]
+    compose_profile: gazebo-clean
+
+  # ── Clock & Bridges ────────────────────────────────────────────────────────
+
+  clock_bridge:                        # Bridges Gazebo /clock to ROS2 for use_sim_time
+    kind: bridge
+    modes: [sim]
+    compose_profile: gazebo
+    ros: ros_gz_bridge/parameter_bridge
+    gates: [clock_monotonic]
+
+  ground_truth_bridge:                 # Bridges Gazebo ground truth pose to ROS2
+    kind: bridge
+    modes: [sim]
+    compose_profile: gazebo
+    ros: ros_gz_bridge/parameter_bridge
+    after: [clock_bridge]
+    timeout: 10
+    critical: false
+
+  # ── Robot Core ─────────────────────────────────────────────────────────────
+
+  robot_state_publisher:               # Publishes URDF TF tree from joint states
+    compose_profile: gazebo
+    ros: robot_state_publisher/robot_state_publisher
+    after: [clock_bridge]
+    gates: ["tf_static:base_link:base_footprint"]
+
+  hardware_bridge:                     # Bridges ros2_control topics to Gazebo gz transport
+    kind: bridge
+    modes: [sim]                      # Real robot uses STM32 serial, not this
+    compose_profile: gazebo
+    script: ros/gazebo_hardware_bridge.py
+    node: gazebo_hardware_bridge
+    after: [robot_state_publisher]
+
+  controller_manager:                  # ros2_control manager (loads hardware interface + controllers)
+    compose_profile: gazebo
+    ros: controller_manager/ros2_control_node
+    after: [hardware_bridge, hardware]   # hardware_bridge in sim, hardware in hw (other stripped by mode)
+
+  controller_spawner:                  # Activates joint_state_broadcaster + tricycle_steering_controller
+    kind: transient                   # Spawns controllers, then exits
+    compose_profile: gazebo
+    ros: controller_manager/spawner
+    after: [controller_manager]
+
+  # ── Sensor Fusion ──────────────────────────────────────────────────────────
+
+  ekf_localization:                    # EKF fusing wheel odometry + IMU → /odometry/filtered + odom→base_link TF
+    compose_profile: overlay
+    ros: robot_localization/ekf_node
+    node: ekf_filter_node
+    after: [controller_spawner, imu_filter]  # imu_filter stripped in sim mode
+    gates: ["topic_active:/odometry/filtered", "tf_transform:odom:base_link"]
+    # warm reset: survives teleport, but position estimate needs /set_pose reset
+
+  # ── Joint State Processing ─────────────────────────────────────────────────
+
+  passive_joint_publisher:             # Publishes states for uncontrolled front wheel joints
+    modes: [sim]
+    compose_profile: gazebo
+    script: ros/passive_joint_publisher.py
+    after: [robot_state_publisher]
+    critical: false
+
+  joint_state_merger:                  # Merges controlled + passive joint states → /joint_states
+    modes: [sim]                      # Real robot doesn't need joint merging
+    compose_profile: gazebo
+    script: ros/joint_state_merger.py
+    after: [controller_spawner, passive_joint_publisher]
+    gates: ["topic_active:/joint_states"]
+    critical: false
+
+  # ── Velocity Relay ─────────────────────────────────────────────────────────
+
+  cmd_vel_relay:                       # Converts Twist → TwistStamped for controller
+    compose_profile: gazebo
+    script: ros/cmd_vel_relay.py
+    after: [controller_spawner]
+    critical: false
+
+  # ── Localization Variants (mutually exclusive) ─────────────────────────────
+
+  amcl:                                # Adaptive Monte Carlo localization on static map
+    compose_profile: nav2
+    ros: nav2_amcl/amcl
+    after: [ekf_localization]
+    timeout: 60
+    excludes: [static_map_odom]
+
+  static_map_odom:                     # Identity map→odom TF (bypasses AMCL for testing)
+    modes: [sim]
+    compose_profile: nav2
+    ros: tf2_ros/static_transform_publisher
+    node: static_transform_publisher
+    after: [ekf_localization]
+    gates: ["tf_transform:map:odom"]
+    timeout: 10
+    excludes: [amcl]
+
+  # ── Nav2 Core ──────────────────────────────────────────────────────────────
+
+  map_server:                          # Serves pre-saved occupancy grid map
+    compose_profile: nav2
+    ros: nav2_map_server/map_server
+    after: [ekf_localization]
+    timeout: 20
+
+  planner_server:                      # Global path planning (SmacPlannerHybrid / Ackermann)
+    compose_profile: nav2
+    ros: nav2_planner/planner_server
+    after: [ekf_localization]         # Overridden to [static_map_odom] in nav2_odom
+
+  controller_server:                   # Local trajectory tracking (MPPI controller)
+    compose_profile: nav2
+    ros: nav2_controller/controller_server
+    after: [ekf_localization]         # Overridden to [static_map_odom] in nav2_odom
+
+  behavior_server:                     # Recovery behaviors (spin, backup, wait)
+    compose_profile: nav2
+    ros: nav2_behaviors/behavior_server
+    after: [ekf_localization]         # Overridden to [static_map_odom] in nav2_odom
+
+  bt_navigator:                        # Behavior tree coordinator for navigation tasks
+    compose_profile: nav2
+    ros: nav2_bt_navigator/bt_navigator
+    after: [ekf_localization]         # Overridden to [static_map_odom] in nav2_odom
+
+  nav2_lifecycle_manager:              # Manages Nav2 node lifecycle (with AMCL)
+    compose_profile: nav2
+    ros: nav2_lifecycle_manager/lifecycle_manager
+    after: [planner_server, controller_server, behavior_server, bt_navigator]
+    timeout: 120
+
+  nav2_odom_lifecycle_manager:         # Manages Nav2 node lifecycle (without AMCL)
+    compose_profile: nav2
+    ros: nav2_lifecycle_manager/lifecycle_manager
+    after: [planner_server, controller_server, behavior_server, bt_navigator]
+    timeout: 120
+
+  # ── SLAM ───────────────────────────────────────────────────────────────────
+
+  slam_toolbox:                        # Online async SLAM — builds 2D occupancy grid map
+    compose_profile: gazebo
+    launch: slam_toolbox/online_async_launch.py
+    after: [ekf_localization, ydlidar]   # ydlidar stripped in sim mode
+    gates: ["topic_active:/map"]
+    timeout: 60
+    # disabled: true                   # re-enabled after warm reset core verified
+
+  # ── Virtual Gates (no container, just validation) ──────────────────────────
+
+  amcl_tf_gate:                        # Validates AMCL is publishing map→odom TF
+    kind: virtual
+    after: [nav2_lifecycle_manager]
+    gates: ["tf_transform:map:odom"]
+    timeout: 120
+
+  slam_tf_gate:                        # Validates slam_toolbox is publishing map→odom TF
+    kind: virtual
+    after: [slam_toolbox]
+    gates: ["tf_transform:map:odom"]
+
+  # ── Test Infrastructure ────────────────────────────────────────────────────
+
+  health_check:                        # Pre-flight validation of topics and transforms
+    compose_profile: gazebo
+    script: ros/health_check.py
+    after: [ekf_localization]
+    critical: false
+
+  test_drive:                          # Executes YAML driving instructions with proportional control
+    compose_profile: gazebo
+    script: ros/test_drive.py
+    after: [ekf_localization, health_check]
+    critical: false
+
+  # ── Hardware (physical robot only) ─────────────────────────────────────────
+
+  hardware:                            # STM32 board: joystick input + motor/servo control
+    modes: [hw]
+    compose_profile: robot
+    script: ros/jetacker_hardware.py
+    node: jetacker_hardware
+
+  ydlidar:                             # YDLidar G4 2D laser scanner
+    modes: [hw]
+    compose_profile: robot
+    ros: ydlidar_ros2_driver/ydlidar_ros2_driver_node
+    node: ydlidar_ros2_driver_node
+
+  imu_filter:                          # Madgwick IMU orientation filter
+    modes: [hw]
+    compose_profile: robot
+    ros: imu_filter_madgwick/imu_filter_madgwick_node
+    node: imu_filter_madgwick
+    after: [hardware]
+
+  twist_relay:                         # Twist→TwistStamped relay for joystick (stop for Nav2 auto)
+    modes: [hw]
+    compose_profile: robot
+    script: ros/twist_relay.py
+    node: twist_relay
+    after: [hardware, controller_spawner]
+    critical: false
+
+  # ── Persistent Infrastructure ──────────────────────────────────────────────
+
+  foxglove:                            # WebSocket bridge for Foxglove Studio visualization
+    kind: bridge
+    compose_profile: foxglove
+    ros: foxglove_bridge/foxglove_bridge
+    node: foxglove_bridge
+
+  x11_server:                          # VNC + noVNC server for Gazebo GUI (port 6080)
+    kind: infra
+    modes: [sim]
+    compose_profile: x11-server
+
+  debug:                               # Interactive debug shell with ros2 CLI tools
+    kind: infra
+    modes: [sim]
+    compose_profile: debug
+
+
+# =============================================================================
+# Stacks
+# =============================================================================
+# Each stack defines a set of components to run together.
+# `extends` inherits all components from parent stacks.
+# `overrides` can change per-component settings (after, gates, etc.) for this stack.
+
+stacks:
+
+  base:
+    description: "Core robot: sim, bridges, controllers, EKF"
+    include:
+      - gazebo
+      - clock_bridge
+      - robot_state_publisher
+      - ground_truth_bridge
+      - hardware_bridge
+      - controller_manager
+      - controller_spawner
+      - ekf_localization
+      - passive_joint_publisher
+      - joint_state_merger
+      - cmd_vel_relay
+      - hardware          # hw only — STM32 board
+      - ydlidar           # hw only — laser scanner
+      - imu_filter        # hw only — Madgwick filter
+      - twist_relay       # hw only, non-critical — joystick relay
+      - health_check      # pre-flight validation
+      - test_drive        # drive test execution container
+
+  nav2:
+    description: "Full Nav2 with AMCL localization"
+    extends: [base]
+    exclude: [health_check]           # not needed during Nav2 trials (saves ~45% CPU)
+    env:
+      TEST_DRIVE_NEUTER: "1"          # test_drive node sleeps instead of rclpy.spin (~55% CPU)
+    include:
+      - amcl
+      - map_server
+      - planner_server
+      - controller_server
+      - behavior_server
+      - bt_navigator
+      - nav2_lifecycle_manager
+      - amcl_tf_gate
+    lifecycle_managed:
+      - map_server
+      - amcl
+      - planner_server
+      - controller_server
+      - behavior_server
+      - bt_navigator
+
+  nav2_odom:
+    description: "Nav2 with static map->odom (no AMCL, odometry-only testing)"
+    extends: [base]
+    exclude: [health_check]           # not needed during Nav2 trials (saves ~45% CPU)
+    env:
+      TEST_DRIVE_NEUTER: "1"          # test_drive node sleeps instead of rclpy.spin (~55% CPU)
+    include:
+      - static_map_odom
+      - map_server
+      - planner_server
+      - controller_server
+      - behavior_server
+      - bt_navigator
+      - nav2_odom_lifecycle_manager
+    overrides:
+      planner_server:    { after: [static_map_odom] }
+      controller_server: { after: [static_map_odom] }
+      behavior_server:   { after: [static_map_odom] }
+      bt_navigator:      { after: [static_map_odom] }
+    lifecycle_managed:
+      - map_server
+      - planner_server
+      - controller_server
+      - behavior_server
+      - bt_navigator
+
+  slam:
+    description: "SLAM mapping with slam_toolbox"
+    extends: [base]
+    include:
+      - slam_toolbox
+      - slam_tf_gate
+
+  test:
+    description: "Test runner infrastructure"
+    include:
+      - health_check
+      - test_drive
+
+  infra:
+    description: "Persistent infrastructure (visualization, debug)"
+    include:
+      - x11_server
+      - foxglove
+      - debug
+
+
+# =============================================================================
+# Robots
+# =============================================================================
+# Each robot declares which stacks it supports and any naming overrides.
+# Compose service name = naming pattern applied to each component.
+
+robots:
+
+  jetacker:
+    description: "Tricycle-drive Jetacker robot"
+    stacks: [base, nav2, nav2_odom, slam]
+    # Uses default naming: jetacker-{component}
+    # Explicit overrides for shared infra containers (no robot prefix)
+    service_map:
+      health_check: health-check
+      test_drive: test-drive
+
+  slam_bot:
+    description: "Legacy differential-drive robot"
+    stacks: [base, slam]
+    naming: "{component}"               # Legacy: unprefixed compose service names
+    service_map:
+      clock_bridge: ros-gz-bridge       # Uses a single combined bridge, not separate clock bridge
+    # slam_bot doesn't use these components from base:
+    component_excludes:
+      - ground_truth_bridge             # No ground truth bridge
+      - hardware_bridge                 # Uses gz-ros2-control directly
+      - passive_joint_publisher           # No passive joints
+      - joint_state_merger              # No joint merging
+      - controller_manager              # Spawner connects to gz-ros2-control
+
+
+# =============================================================================
+# Conflicts
+# =============================================================================
+# Stacks that cannot run simultaneously.
+# Format: [robot:stack, robot:stack] — both directions implied.
+
+conflicts:
+  - ["jetacker:base", "slam_bot:base"]          # Both run Gazebo on same host
+  - ["jetacker:nav2", "jetacker:slam"]          # Both publish map->odom TF
+  - ["jetacker:nav2_odom", "jetacker:slam"]     # Both publish map->odom TF
+  - ["jetacker:nav2", "jetacker:nav2_odom"]     # Both run Nav2 lifecycle manager

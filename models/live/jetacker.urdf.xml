@@ -1,0 +1,157 @@
+<?xml version="1.0"?>
+<robot name="test_ackermann_robot">
+
+  <!-- Base footprint - ground projection (Z=0) for navigation -->
+  <link name="base_footprint"/>
+
+  <!-- Base footprint to base link joint - elevates robot body above ground -->
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.05" rpy="0 0 0"/>  <!-- 50mm wheel radius -->
+  </joint>
+
+  <!-- Base link - robot body center -->
+  <link name="base_link">
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+    </inertial>
+  </link>
+
+  <!-- Rear left wheel -->
+  <joint name="rear_left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_left_wheel"/>
+    <origin xyz="0.0 0.0975 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <link name="rear_left_wheel">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Rear right wheel -->
+  <joint name="rear_right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="rear_right_wheel"/>
+    <origin xyz="0.0 -0.0975 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+  <link name="rear_right_wheel">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Single front steering joint (tricycle configuration) -->
+  <joint name="front_steering_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="front_steering_link"/>
+    <origin xyz="0.216 0.0 0.0" rpy="0 0 0"/>  <!-- Centered at steering pivot -->
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.4887" upper="0.4887" effort="10" velocity="1"/>  <!-- 28° physical limit -->
+  </joint>
+  <link name="front_steering_link">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Front left wheel (attached to steering link) -->
+  <joint name="front_left_wheel_joint" type="continuous">
+    <parent link="front_steering_link"/>
+    <child link="front_left_wheel"/>
+    <origin xyz="0.0 0.1125 0.0" rpy="0 0 0"/>  <!-- Half of steering track width -->
+    <axis xyz="0 1 0"/>
+  </joint>
+  <link name="front_left_wheel">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Front right wheel (attached to steering link) -->
+  <joint name="front_right_wheel_joint" type="continuous">
+    <parent link="front_steering_link"/>
+    <child link="front_right_wheel"/>
+    <origin xyz="0.0 -0.1125 0.0" rpy="0 0 0"/>  <!-- Half of steering track width -->
+    <axis xyz="0 1 0"/>
+  </joint>
+  <link name="front_right_wheel">
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Laser frame (YDLidar G4) at front nose, 50mm up, 10mm behind front wheel axis -->
+  <!-- Rotated 180° around Z axis because lidar cable points backward (lidar's 0° = cable direction) -->
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_frame"/>
+    <origin xyz="0.2 0.0 0.05" rpy="0 0 3.14159"/> <!-- forward above front wheels -->
+  </joint>
+  <link name="laser_frame"/>
+
+  <!-- IMU frame mounted 50mm above base -->
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0.10 0.0 0.05" rpy="0 0 0"/> <!-- towards the center of mass -->
+  </joint>
+  <link name="imu_link"/>
+
+  <!-- Camera frame - slightly above and behind lidar -->
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera"/>
+    <origin xyz="0.18 0.0 0.07" rpy="0 0 0"/> <!-- 20mm behind lidar, 70mm up -->
+  </joint>
+  <link name="camera"/>
+
+  <!-- ros2_control hardware interface -->
+  <ros2_control name="JetackerAckermannSystem" type="system">
+    <hardware>
+      <plugin>joint_state_topic_hardware_interface/JointStateTopicSystem</plugin>
+      <param name="sum_wrapped_joint_states">false</param>
+      <param name="trigger_joint_command_threshold">-1.0</param>
+    </hardware>
+
+    <!-- Single front steering joint (tricycle configuration) -->
+    <joint name="front_steering_joint">
+      <command_interface name="position"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+
+    <!-- Rear left wheel -->
+    <joint name="rear_left_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+
+    <!-- Rear right wheel -->
+    <joint name="rear_right_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+  </ros2_control>
+
+</robot>

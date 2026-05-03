@@ -1,0 +1,12 @@
+waypoints:
+- name: 'Matrix 2: Reverse 1.0m straight'
+  x: -1.0
+  y: 0.0
+  heading_deg: 0.0
+  tolerance_xy: 0.25  # 250mm — relaxed for AMCL tuning (scoring captures accuracy)
+  tolerance_yaw: 0.25  # ~14° — relaxed for AMCL tuning (scoring captures accuracy)
+  timeout: 15.0  # Nominal ~6-9s, 15s allows slow-but-valid configs
+  qx: 0.0
+  qy: 0.0
+  qz: 0.0
+  qw: 1.0
